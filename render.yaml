@@ -39,4 +39,4 @@ services:
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM_EMAIL
-        value: onboarding@resend.dev
+        value: Judo <verify@judomeet.online>

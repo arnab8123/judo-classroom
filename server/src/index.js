@@ -315,6 +315,21 @@ function createOrFindOAuthUser(provider, profile) {
 app.get('/api/health', (_req, res) => res.json({ ok: true, service: 'judo-api', database: db.open ? 'connected' : 'unavailable', livekitConfigured: Boolean(LIVEKIT_API_KEY && LIVEKIT_API_SECRET), uptimeSeconds: Math.floor(process.uptime()) }));
 app.get('/api/auth/providers', (_req, res) => res.json({ providers: Object.fromEntries([...OAUTH_PROVIDERS].map((provider) => [provider, Boolean(oauthClient(provider).id && oauthClient(provider).secret)])), whatsapp: false }));
 
+function resendSignupError(status, payload) {
+  const message = String(payload?.message || payload?.error || '').toLowerCase();
+  if (status === 401 || status === 403 && /api key|invalid.*key|unauthorized/.test(message)) {
+    return 'Resend rejected the API key. Check that RESEND_API_KEY is active and belongs to the correct Resend project.';
+  }
+  if (status === 403 && /testing emails|test email|own email address/.test(message)) {
+    return 'Resend is using its test sender, which only delivers to the email address on your Resend account. Sign up with that exact address, or verify a domain in Resend and set RESEND_FROM_EMAIL to an address on that domain.';
+  }
+  if (/domain.*(verify|verified)|not.*verified|sender.*domain/.test(message)) {
+    return 'Resend does not accept this sender yet. Verify the sender domain in Resend, then set RESEND_FROM_EMAIL to an address on that domain.';
+  }
+  if (status === 429) return 'Resend is temporarily rate limiting email. Wait a little and try again.';
+  return 'Resend could not send the verification email. Check the sender address and API key in your server settings.';
+}
+
 app.post('/api/auth/register/start', async (req, res) => {
   const name = String(req.body?.name || '').trim().replace(/[<>\u0000-\u001f]/g, '').slice(0, 100);
   const email = String(req.body?.email || '').trim().toLowerCase();
@@ -335,7 +350,12 @@ app.post('/api/auth/register/start', async (req, res) => {
       method: 'POST', headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ from: process.env.RESEND_FROM_EMAIL, to: [email], subject: 'Verify your Judo host account', text: `Hello ${name}, your Judo verification code is ${code}. It expires in 10 minutes.`, html: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Verify your Judo account</title></head><body style="margin:0;background:#f5f5f2;font-family:Arial,Helvetica,sans-serif;color:#202020"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0"><tr><td align="center" style="padding:32px 16px"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="max-width:520px;background:#fff;border-radius:14px"><tr><td style="padding:28px"><h1 style="font-size:22px;line-height:1.3;margin:0 0 14px">Verify your email</h1><p style="font-size:15px;line-height:1.6;margin:0 0 16px">Hello ${safeName}, enter this code to finish creating your Judo host account:</p><p style="font-size:30px;line-height:1.4;letter-spacing:8px;font-weight:bold;margin:0 0 16px">${code}</p><p style="font-size:13px;line-height:1.5;color:#555;margin:0">This code expires in 10 minutes. If you didn’t request it, you can ignore this email.</p></td></tr></table></td></tr></table></body></html>` })
     });
-    if (!response.ok) { const detail = await response.text(); console.error('Resend email error:', response.status, detail.slice(0, 300)); return res.status(502).json({ error: 'Could not send the verification email. Check your Resend sender and API key.' }); }
+    if (!response.ok) {
+      let payload = {};
+      try { payload = await response.json(); } catch { /* Resend may return a non-JSON proxy error. */ }
+      console.error('Resend email request rejected:', response.status, payload?.name || 'unknown_error');
+      return res.status(502).json({ error: resendSignupError(response.status, payload) });
+    }
   } catch (err) { console.error('Resend request failed:', err?.message || err); return res.status(502).json({ error: 'Could not reach the email service. Try again shortly.' }); }
   db.prepare(`INSERT INTO signup_verifications (email,name,password_hash,code_hash,expires_at,attempts,sent_at) VALUES (?,?,?,?,?,0,?)
     ON CONFLICT(email) DO UPDATE SET name=excluded.name,password_hash=excluded.password_hash,code_hash=excluded.code_hash,expires_at=excluded.expires_at,attempts=0,sent_at=excluded.sent_at`)

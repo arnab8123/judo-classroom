@@ -11,6 +11,12 @@ if (alreadyProvisioned) {
 }
 
 const production = process.env.NODE_ENV === 'production';
+const hasSeedCredentials = ['SEED_TEACHER_NAME', 'SEED_TEACHER_EMAIL', 'SEED_TEACHER_PASSWORD']
+  .some((key) => Boolean(process.env[key]?.trim()));
+if (production && !hasSeedCredentials) {
+  console.log('No initial teacher credentials configured; teachers can register through email verification.');
+  process.exit(0);
+}
 const name = String(process.env.SEED_TEACHER_NAME || (production ? '' : 'Class Teacher')).trim();
 const email = String(process.env.SEED_TEACHER_EMAIL || (production ? '' : 'teacher@demo.local')).trim().toLowerCase();
 const password = String(process.env.SEED_TEACHER_PASSWORD || (production ? '' : 'Classroom123!'));
