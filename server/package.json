@@ -1,0 +1,32 @@
+{
+  "name": "language-classroom-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "node --watch src/index.js",
+    "start": "node src/index.js",
+    "seed": "node src/seed.js",
+    "check": "node --check src/index.js && node --check src/db.js && node --check src/auth.js && node --check src/seed.js && node --check src/backup.js && node --check src/file-validation.js",
+    "backup": "node src/backup.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^11.8.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^4.21.2",
+    "express-rate-limit": "^7.5.0",
+    "helmet": "^8.0.0",
+    "jsonwebtoken": "^9.0.2",
+    "livekit-server-sdk": "^2.9.6",
+    "mime-types": "^2.1.35",
+    "multer": "^2.4.0",
+    "socket.io": "^4.8.1"
+  },
+  "engines": {
+    "node": ">=22.22.0"
+  }
+}

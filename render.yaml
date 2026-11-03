@@ -1,0 +1,56 @@
+services:
+  - type: web
+    name: judo-classroom
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm run build
+    startCommand: npm run seed && npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    disk:
+      name: judo-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DB_PATH
+        value: /var/data/classroom.sqlite
+      - key: UPLOAD_DIR
+        value: /var/data/uploads
+      - key: BACKUP_DIR
+        value: /var/data/backups
+      - key: MAX_UPLOAD_MB
+        value: "15"
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: SEED_TEACHER_NAME
+        sync: false
+      - key: SEED_TEACHER_EMAIL
+        sync: false
+      - key: SEED_TEACHER_PASSWORD
+        sync: false
+      - key: LIVEKIT_URL
+        sync: false
+      - key: LIVEKIT_HTTP_URL
+        sync: false
+      - key: LIVEKIT_API_KEY
+        sync: false
+      - key: LIVEKIT_API_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: MICROSOFT_CLIENT_ID
+        sync: false
+      - key: MICROSOFT_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        sync: false
