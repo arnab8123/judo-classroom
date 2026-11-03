@@ -623,8 +623,10 @@ if (fs.existsSync(path.join(CLIENT_DIST, 'index.html'))) {
   });
 }
 
-app.use((err, _req, res, _next) => {
-  console.error('Unhandled API error:', err?.message || err);
+app.use((err, req, res, _next) => {
+  // Include the route in server logs so production 500s can be traced without
+  // logging request bodies, authorization headers, or other user data.
+  console.error('Unhandled API error:', req.method, req.path, err?.code || '', err?.message || err);
   if (res.headersSent) return;
   res.status(500).json({ error: 'Unexpected server error. Check the server logs for details.' });
 });

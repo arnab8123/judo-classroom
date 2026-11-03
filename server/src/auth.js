@@ -1,5 +1,6 @@
 import jwt from 'jsonwebtoken';
 import dotenv from 'dotenv';
+import { db } from './db.js';
 dotenv.config();
 
 const secret = process.env.AUTH_SECRET || 'local-dev-secret-change-this';
@@ -33,6 +34,10 @@ export function requireTeacher(req, res, next) {
     if (!token) return res.status(401).json({ error: 'Teacher sign-in required.' });
     const claims = verifyAppToken(token);
     if (!claims.userId || !['teacher', 'admin'].includes(claims.role)) return res.status(403).json({ error: 'Teacher access required.' });
+    // A still-valid JWT can outlive a reset/restored SQLite database. Reject it here
+    // instead of allowing later classroom inserts to fail their host_user_id FK.
+    const user = db.prepare('SELECT id, role FROM users WHERE id=?').get(claims.userId);
+    if (!user || user.role !== claims.role) return res.status(401).json({ error: 'Your host account is no longer available. Sign in again.' });
     req.teacher = claims;
     next();
   } catch {
