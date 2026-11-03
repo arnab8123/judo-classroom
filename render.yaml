@@ -2,24 +2,20 @@ services:
   - type: web
     name: judo-classroom
     runtime: node
-    plan: starter
+    plan: free
     buildCommand: npm install && npm run build
     startCommand: npm run seed && npm start
     healthCheckPath: /api/health
     autoDeploy: true
-    disk:
-      name: judo-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: NODE_ENV
         value: production
       - key: DB_PATH
-        value: /var/data/classroom.sqlite
+        value: ./data/classroom.sqlite
       - key: UPLOAD_DIR
-        value: /var/data/uploads
+        value: ./uploads
       - key: BACKUP_DIR
-        value: /var/data/backups
+        value: ./backups
       - key: MAX_UPLOAD_MB
         value: "15"
       - key: AUTH_SECRET
