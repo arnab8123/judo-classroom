@@ -16,6 +16,6 @@
     "test": "npm run test --workspace server"
   },
   "engines": {
-    "node": ">=22.22.0"
+    "node": ">=22.22.0 <23"
   }
 }
