@@ -366,3 +366,42 @@
   .meeting-control-center{overflow:visible}
   .meeting-control-center .meeting-control{min-width:36px;width:36px}
 }
+
+/* Keep participant tiles in a scrollable, non-overlapping grid. Each row is sized
+   from the 4:3 tile ratio; additional participants continue below the first two rows. */
+.meeting-stage .video-grid.video-grid-panel-closed,
+.meeting-stage .video-grid.video-grid-panel-open{
+  flex:1 1 0%;
+  height:auto;
+  min-height:0;
+  overflow-x:hidden;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  align-content:start;
+  align-items:start;
+  grid-auto-flow:row;
+  grid-auto-rows:auto;
+  grid-template-rows:none;
+  gap:10px;
+  padding:0 10px 10px;
+}
+.meeting-stage .video-grid.video-grid-panel-closed{grid-template-columns:repeat(5,minmax(0,1fr))}
+.meeting-stage .video-grid.video-grid-panel-open{grid-template-columns:repeat(4,minmax(0,1fr))}
+.meeting-stage .video-grid.video-grid-panel-closed .video-tile,
+.meeting-stage .video-grid.video-grid-panel-open .video-tile{
+  width:100%;
+  height:auto;
+  min-width:0;
+  min-height:0;
+  aspect-ratio:4/3;
+}
+@media(max-width:760px){
+  .meeting-stage .video-grid.video-grid-panel-closed,
+  .meeting-stage .video-grid.video-grid-panel-open{
+    grid-template-columns:minmax(0,1fr);
+    grid-template-rows:none;
+    grid-auto-rows:auto;
+    gap:10px;
+    padding:0 10px 10px;
+  }
+}
