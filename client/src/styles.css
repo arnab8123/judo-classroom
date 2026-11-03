@@ -317,3 +317,52 @@
   .meet-join-card h2{font-size:22px}
   .meet-footer{padding:12px 15px}
 }
+
+/* Meeting refinements: fixed two-row desktop viewport, mobile stack, and utility controls. */
+.video-grid-panel-closed,.video-grid-panel-open{align-content:start;align-items:start;grid-auto-flow:row;grid-auto-rows:auto;overflow:auto;overscroll-behavior:contain}
+.video-grid-panel-closed{grid-template-columns:repeat(5,minmax(0,1fr));grid-template-rows:repeat(2,auto)}
+.video-grid-panel-open{grid-template-columns:repeat(4,minmax(0,1fr));grid-template-rows:repeat(2,auto)}
+.video-grid-panel-closed .video-tile,.video-grid-panel-open .video-tile{width:100%;height:auto;min-width:0;min-height:0;aspect-ratio:4/3}
+.participant-wrap{display:contents}
+.people-panel-actions{display:flex;align-items:center;gap:10px}
+.people-panel-close{display:none}
+.share-active-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;color:var(--ink);font-size:11px}
+.share-active-row>span{display:flex;align-items:center;gap:6px;min-width:0}
+.share-active-row .button{flex:none}
+.recording-help{margin:2px 4px 6px;color:var(--muted);font-size:10px;line-height:1.45}
+.recording-menu-action{color:#c83e4c!important}
+.record-dot-active{animation:recordPulse 1.1s ease-in-out infinite}
+@keyframes recordPulse{50%{opacity:.35;transform:scale(.78)}}
+.tile-speaking .mic-speaking{background:#24a77d;animation:micPulse 1.15s ease-in-out infinite;box-shadow:0 0 0 3px #32b88b33}
+.person-speaking .person-avatar{box-shadow:0 0 0 3px #32b88b33}
+.person-speaking .person-info>span{color:#20916c;font-weight:700}
+.person-mic-speaking{color:#20916c;animation:micPulse 1.15s ease-in-out infinite}
+@keyframes micPulse{50%{transform:scale(1.16);filter:drop-shadow(0 0 4px #32b88b88)}}
+@media(max-width:760px){
+  .meeting-header-actions .meeting-clock{display:flex}
+  .video-grid-panel-closed,.video-grid-panel-open{grid-template-columns:minmax(0,1fr);grid-template-rows:none;grid-auto-rows:auto;align-content:start;justify-items:stretch;gap:8px;padding:0 1px 8px;height:100%;min-height:0}
+  .video-grid-panel-closed .video-tile,.video-grid-panel-open .video-tile{width:100%;height:auto;min-height:0;aspect-ratio:4/3}
+  .meeting-main-with-panel{display:block;position:relative;min-height:0;overflow:hidden}
+  .meeting-main-with-panel .meeting-stage{height:100%;min-height:0}
+  .meeting-main-with-panel>.meeting-panel{position:absolute;z-index:7;right:7px;top:46px;bottom:5px;width:min(340px,calc(100% - 14px));min-height:0;max-height:none;box-shadow:0 12px 40px rgba(32,35,60,.2)}
+  .meeting-main-with-panel>.meeting-people-panel{display:flex;flex-direction:column}
+  .meeting-people-panel>.people-panel{max-height:none;overflow:auto;min-height:0;flex:1}
+  .people-panel-close{display:grid}
+  .meeting-main:not(.meeting-main-with-panel) .video-grid{grid-template-columns:minmax(0,1fr);grid-template-rows:none;grid-auto-rows:auto;align-content:start;height:100%;min-height:0;overflow:auto}
+  .meeting-main:not(.meeting-main-with-panel) .video-grid .video-tile{width:100%;height:auto;min-height:0;aspect-ratio:4/3}
+  .meeting-main:not(.meeting-main-with-panel) .meeting-stage{min-height:0}
+  .share-popover{left:0;transform:none;max-width:calc(100vw - 20px)}
+  .share-popover,.more-popover{max-height:calc(100dvh - 150px);overflow:auto;overscroll-behavior:contain}
+}
+@media(max-width:420px){
+  .meeting-header{padding-inline:7px}
+  .meeting-heading{max-width:94px}
+  .meeting-heading strong{max-width:94px}
+  .meeting-header-actions .meeting-clock{display:flex;font-size:9px;padding:0 2px}
+  .meeting-header-actions .icon-button:last-child{display:none}
+  .stage-mode-switch button{padding-inline:6px}
+  .stage-toolbar-right{gap:4px}
+  .stage-toolbar-right .button{padding-inline:5px;font-size:8px}
+  .meeting-control-center{overflow:visible}
+  .meeting-control-center .meeting-control{min-width:36px;width:36px}
+}

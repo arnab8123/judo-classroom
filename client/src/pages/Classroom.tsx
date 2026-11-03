@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { LocalVideoTrack, Participant, Room, RoomEvent, Track, TrackPublication } from 'livekit-client';
 import {
-  ArrowLeft, ArrowUpRight, Bell, BookOpen, Check, ChevronDown, CircleHelp, Copy, FileText, Hand, Headphones,
+  ArrowLeft, ArrowUpRight, Bell, BookOpen, Check, ChevronDown, Circle, CircleHelp, Copy, FileText, Hand, Headphones,
   MessageCircle, Mic, MicOff, MonitorUp, MoreHorizontal, Maximize2, PanelRightClose, Paperclip, PhoneOff, Pin, Send,
   Settings2, ShieldCheck, Smile, Sparkles, Square, Sun, Moon, Users, Video, VideoOff, Volume2, X, Wifi, XCircle
 } from 'lucide-react';
@@ -38,10 +38,14 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   const [announcement, setAnnouncement] = useState('');
   const [showAnnouncement, setShowAnnouncement] = useState(false);
   const [elapsed, setElapsed] = useState(0);
+  const [isRecording, setIsRecording] = useState(false);
   const [showShareMenu, setShowShareMenu] = useState(false);
   const [showMore, setShowMore] = useState(false);
   const shareRef = useRef(screenShares);
   const stoppingSharesRef = useRef(new Set<string>());
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
   const startedAt = useRef(Date.now());
   shareRef.current = screenShares;
 
@@ -124,12 +128,14 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
     classroomSocket.on('meeting:announcement', (data: { displayName: string; message: string }) => setAnnouncement(`${data.displayName}: ${data.message}`));
     setSocket(classroomSocket);
 
-    const tick = window.setInterval(() => setElapsed(Math.floor((Date.now() - startedAt.current) / 60000)), 30000);
+    const tick = window.setInterval(() => setElapsed(Math.floor((Date.now() - startedAt.current) / 1000)), 1000);
     return () => {
       active = false;
       window.clearInterval(tick);
       classroomSocket.disconnect();
       shareRef.current.forEach((share) => { share.videoTrack.stop(); share.audioTrack?.stop(); });
+      if (recorderRef.current?.state === 'recording') recorderRef.current.stop();
+      else recordingStreamRef.current?.getTracks().forEach((track) => track.stop());
       liveRoom.disconnect();
     };
   }, [session.livekitUrl, session.livekitToken, session.sessionToken, mediaChoice, bump]);
@@ -158,7 +164,7 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
       });
       const cameraOn = Boolean(participant.isCameraEnabled && camera?.track && !camera.isMuted);
       return { participant, camera, cameraOn, screens };
-    });
+    }).sort((a, b) => Number(b.participant.isSpeaking) - Number(a.participant.isSpeaking));
   }, [participants, refreshKey]);
 
   const toggleMic = async () => {
@@ -212,6 +218,40 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
     stoppingSharesRef.current.delete(id);
     bump();
   };
+  const startRecording = async () => {
+    setShowMore(false);
+    if (!navigator.mediaDevices?.getDisplayMedia || typeof MediaRecorder === 'undefined') {
+      setMediaError('Recording is not supported by this browser. Try a recent desktop version of Chrome or Edge.'); return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 20, max: 30 } }, audio: true });
+      const mimeType = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4'].find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      recordingChunksRef.current = [];
+      recordingStreamRef.current = stream;
+      recorderRef.current = recorder;
+      recorder.ondataavailable = (event) => { if (event.data.size) recordingChunksRef.current.push(event.data); };
+      recorder.onstop = () => {
+        const blob = new Blob(recordingChunksRef.current, { type: recorder.mimeType || 'video/webm' });
+        if (blob.size) {
+          const url = URL.createObjectURL(blob);
+          const anchor = document.createElement('a'); anchor.href = url;
+          const extension = blob.type.includes('mp4') ? 'mp4' : 'webm';
+          anchor.download = `judo-class-${session.room.code}-${new Date().toISOString().replace(/[:.]/g, '-')}.${extension}`;
+          anchor.click(); window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        }
+        stream.getTracks().forEach((track) => track.stop());
+        recordingStreamRef.current = null; recorderRef.current = null; recordingChunksRef.current = []; setIsRecording(false);
+      };
+      stream.getVideoTracks()[0]?.addEventListener('ended', () => { if (recorder.state === 'recording') recorder.stop(); }, { once: true });
+      recorder.start(1000); setIsRecording(true);
+      if (!stream.getAudioTracks().length) setMediaError('Recording started without audio. Select this browser tab and enable tab audio in the browser picker to include class sound.');
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'NotAllowedError') return;
+      setMediaError(err instanceof Error ? err.message : 'Could not start the class recording.');
+    }
+  };
+  const stopRecording = () => { if (recorderRef.current?.state === 'recording') recorderRef.current.stop(); };
   const toggleHand = () => { const next = !raised; setRaised(next); socket?.emit('participant:hand', { raised: next }); };
   const changeStage = (next: 'video' | 'board') => {
     setStage(next);
@@ -232,17 +272,18 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   const localCameraOn = room?.localParticipant.isCameraEnabled ?? mediaChoice.cameraEnabled;
   const localMicOn = room?.localParticipant.isMicrophoneEnabled ?? mediaChoice.micEnabled;
   const currentPanel = (next: typeof panel) => setPanel((old) => old === next ? null : next);
+  const clockText = `${String(Math.floor(elapsed / 3600)).padStart(2, '0')}:${String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}`;
 
   return <div className="meeting-shell">
     <header className="meeting-header"><div className="meeting-brand-wrap"><a className="brand meeting-brand" href="#" onClick={(e) => e.preventDefault()}><span className="brand-mark"><BookOpen size={18} /></span><span>Judo</span></a><span className="meeting-header-divider" /><div className="meeting-heading"><strong>{session.room.title}</strong><span>{session.room.language} lesson</span></div></div>
-      <div className="meeting-header-actions"><span className={`connection-pill connection-${connection}`}><span className="online-dot" />{connection === 'connected' ? 'Connected' : connection === 'reconnecting' ? 'Reconnecting…' : connection === 'disconnected' ? 'Disconnected' : 'Connecting…'}</span><span className="meeting-clock"><span className="record-dot" /> {String(Math.floor(elapsed / 60)).padStart(2, '0')}:{String(elapsed % 60).padStart(2, '0')}</span><button className="icon-button" title="Copy invite link" aria-label="Copy invite link" onClick={copyInvite}><Copy size={17} /></button><button className="theme-toggle" onClick={onToggleTheme} aria-label="Toggle color theme">{theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}</button><button className="icon-button" title="Help" aria-label="Help" onClick={() => alert('Tip: allow camera/microphone permissions, use the share menu to share screens, and use the right-side panels for chat, people, files, and private notes. Screen sharing and desktop audio depend on your browser and operating system.') }><CircleHelp size={18} /></button></div>
+      <div className="meeting-header-actions"><span className={`connection-pill connection-${connection}`}><span className="online-dot" />{connection === 'connected' ? 'Connected' : connection === 'reconnecting' ? 'Reconnecting…' : connection === 'disconnected' ? 'Disconnected' : 'Connecting…'}</span><span className="meeting-clock"><span className={`record-dot ${isRecording ? 'record-dot-active' : ''}`} /> {clockText}</span><button className="icon-button" title="Copy invite link" aria-label="Copy invite link" onClick={copyInvite}><Copy size={17} /></button><button className="theme-toggle" onClick={onToggleTheme} aria-label="Toggle color theme">{theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}</button><button className="icon-button" title="Help" aria-label="Help" onClick={() => alert('Tip: allow camera/microphone permissions, use the share menu to share screens, and use the right-side panels for chat, people, files, and private notes. Screen sharing and desktop audio depend on your browser and operating system.') }><CircleHelp size={18} /></button></div>
     </header>
     {announcement && <div className="announcement-banner"><Bell size={16} /><span>{announcement}</span><button aria-label="Dismiss announcement" onClick={() => setAnnouncement('')}><X size={15} /></button></div>}
     {mediaError && <div className="meeting-alert" role="status"><XCircle size={17} /><span>{mediaError}</span><button onClick={() => setMediaError('')} aria-label="Dismiss error"><X size={15} /></button></div>}
     {endedMessage && <div className="meeting-ended-overlay"><div className="ended-card"><div className="ended-icon"><PhoneOff size={24} /></div><h2>Classroom ended</h2><p>{endedMessage}</p><button className="button button-primary" onClick={leave}>Return to Judo</button></div></div>}
     <main className={`meeting-main ${panel || peopleVisible ? 'meeting-main-with-panel' : ''} ${!panel && peopleVisible ? 'meeting-people-layout' : ''}`}>
       <section className="meeting-stage">
-        <div className="stage-toolbar"><div className="stage-mode-switch"><button onClick={() => changeStage('video')} disabled={session.role !== 'teacher'} className={stage === 'video' ? 'active' : ''}><Video size={15} /> Video</button><button onClick={() => changeStage('board')} disabled={session.role !== 'teacher'} className={stage === 'board' ? 'active' : ''}><BookOpen size={15} /> Whiteboard</button></div><div className="stage-toolbar-right"><span className="stage-help">{session.role === 'teacher' ? 'Choose a view for the whole class' : 'The teacher chooses what everyone sees'}</span><span className="participant-count"><Users size={15} /> {participants.length}</span><button className="button button-quiet button-xs" onClick={() => { setPanel(null); setPeopleVisible((visible) => !visible); }}><Users size={14} /> {peopleVisible ? 'Hide people' : 'Show people'}</button></div></div>
+        <div className="stage-toolbar"><div className="stage-mode-switch"><button onClick={() => changeStage('video')} disabled={session.role !== 'teacher'} className={stage === 'video' ? 'active' : ''}><Video size={15} /> Video</button><button onClick={() => changeStage('board')} disabled={session.role !== 'teacher'} className={stage === 'board' ? 'active' : ''}><BookOpen size={15} /> Whiteboard</button></div><div className="stage-toolbar-right"><span className="participant-count"><Users size={15} /> {participants.length}</span><button className="button button-quiet button-xs" onClick={() => { setPanel(null); setPeopleVisible((visible) => !visible); }}><Users size={14} /> {peopleVisible ? 'Hide people' : 'Show people'}</button></div></div>
         {stage === 'video' ? <div className={`video-grid ${peopleVisible ? 'video-grid-panel-open' : 'video-grid-panel-closed'}`}>
           {videoTiles.filter(({ cameraOn, screens }) => cameraOn || screens.some((screen) => Boolean(screen.track) && !screen.isMuted)).map(({ participant, camera, cameraOn, screens }) => {
             const isLocal = participant === room?.localParticipant;
@@ -258,7 +299,7 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
         {reaction && <div className="reaction-toast"><span>{reaction.emoji}</span><strong>{reaction.displayName}</strong></div>}
         <div className="screen-share-strip">{screenShares.map((share) => <div className="screen-share-chip" key={share.id}><MonitorUp size={14} /><span>{share.label}{share.audioTrack ? ' · audio' : ''}</span><button onClick={() => stopScreenShare(share.id)} title={`Stop ${share.label}`} aria-label={`Stop ${share.label}`}><X size={13} /></button></div>)}</div>
       </section>
-      {!panel && peopleVisible && <aside className="meeting-panel meeting-people-panel"><div className="panel-header"><div><h2>People</h2><span>{participants.length} in this classroom</span></div><Users size={18} /></div><PeoplePanel participants={participants} localParticipant={room?.localParticipant || null} hands={hands} session={session} socket={socket} onAnnouncement={() => setShowAnnouncement(true)} /></aside>}
+      {!panel && peopleVisible && <aside className="meeting-panel meeting-people-panel"><div className="panel-header"><div><h2>People</h2><span>{participants.length} in this classroom</span></div><div className="people-panel-actions"><Users size={18} /><button className="icon-button people-panel-close" onClick={() => setPeopleVisible(false)} aria-label="Close people panel"><X size={17} /></button></div></div><PeoplePanel participants={participants} localParticipant={room?.localParticipant || null} hands={hands} session={session} socket={socket} onAnnouncement={() => setShowAnnouncement(true)} /></aside>}
       {panel && <aside className="meeting-panel"><div className="panel-header"><div><h2>{panel === 'chat' ? 'In-call messages' : panel === 'people' ? 'People' : panel === 'files' ? 'Class materials' : 'My private notes'}</h2><span>{panel === 'chat' ? 'Messages are visible to everyone' : panel === 'people' ? `${participants.length} in this classroom` : panel === 'files' ? 'Shared with this class' : 'Only you can see these notes'}</span></div><button className="icon-button" onClick={() => setPanel(null)} aria-label="Close panel"><PanelRightClose size={18} /></button></div>
         {panel === 'chat' && <ChatPanel messages={chatMessages} socket={socket} participantId={session.participantId} />}
         {panel === 'people' && <PeoplePanel participants={participants} localParticipant={room?.localParticipant || null} hands={hands} session={session} socket={socket} onAnnouncement={() => setShowAnnouncement(true)} />}
@@ -272,10 +313,10 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
       <div className="meeting-control-center">
         <button className={`meeting-control ${localMicOn ? '' : 'meeting-control-off'}`} onClick={toggleMic} title={localMicOn ? 'Mute microphone' : 'Unmute microphone'} aria-label={localMicOn ? 'Mute microphone' : 'Unmute microphone'}>{localMicOn ? <Mic size={20} /> : <MicOff size={20} />}<span>{localMicOn ? 'Mute' : 'Unmute'}</span></button>
         <button className={`meeting-control ${localCameraOn ? '' : 'meeting-control-off'}`} onClick={toggleCamera} title={localCameraOn ? 'Turn camera off' : 'Turn camera on'} aria-label={localCameraOn ? 'Turn camera off' : 'Turn camera on'}>{localCameraOn ? <Video size={20} /> : <VideoOff size={20} />}<span>{localCameraOn ? 'Camera' : 'Camera off'}</span></button>
-        <div className="share-control-wrap"><button className={`meeting-control meeting-share ${screenShares.length ? 'meeting-control-active' : ''}`} onClick={() => setShowShareMenu((v) => !v)} title="Share your screen"><MonitorUp size={20} /><span>Share screen</span><ChevronDown size={13} /></button>{showShareMenu && <div className="share-popover"><label className="checkbox-row"><input type="checkbox" checked={shareAudio} onChange={(e) => setShareAudio(e.target.checked)} /><span><strong>Also share tab/system audio</strong><small>Only if your browser offers audio for the selected source.</small></span></label><button className="button button-primary button-wide" onClick={startScreenShare}><MonitorUp size={16} /> Share another screen</button><span className="muted small-text">Multiple shares may be limited by the browser or operating system.</span></div>}</div>
+        <div className="share-control-wrap"><button className={`meeting-control meeting-share ${screenShares.length ? 'meeting-control-active' : ''}`} onClick={() => setShowShareMenu((v) => !v)} title="Share your screen"><MonitorUp size={20} /><span>Share screen</span><ChevronDown size={13} /></button>{showShareMenu && <div className="share-popover"><label className="checkbox-row"><input type="checkbox" checked={shareAudio} onChange={(e) => setShareAudio(e.target.checked)} /><span><strong>Also share tab/system audio</strong><small>Available sources depend on your browser.</small></span></label>{screenShares.map((share) => <div className="share-active-row" key={share.id}><span><MonitorUp size={15} /> {share.label} is being shared</span><button className="button button-outline button-small" onClick={() => stopScreenShare(share.id)}>Cancel share</button></div>)}<button className="button button-primary button-wide" onClick={startScreenShare}><MonitorUp size={16} /> {screenShares.length ? 'Share another screen' : 'Share a screen'}</button></div>}</div>
         <button className={`meeting-control ${raised ? 'meeting-control-active' : ''}`} onClick={toggleHand} title={raised ? 'Lower hand' : 'Raise hand'} aria-label={raised ? 'Lower hand' : 'Raise hand'}>{raised ? <Hand size={20} fill="currentColor" /> : <Hand size={20} />}<span>{raised ? 'Lower hand' : 'Raise hand'}</span></button>
         <button className="meeting-control" onClick={() => currentPanel('chat')} title="Open chat"><MessageCircle size={20} /><span>Chat</span>{chatMessages.length > 0 && <span className="control-badge">{chatMessages.length > 99 ? '99+' : chatMessages.length}</span>}</button>
-        <div className="more-control-wrap"><button className="meeting-control" onClick={() => setShowMore((v) => !v)} title="More controls"><MoreHorizontal size={21} /><span>More</span></button>{showMore && <div className="more-popover"><button onClick={() => { currentPanel('people'); setShowMore(false); }}><Users size={16} /> People</button><button onClick={() => { currentPanel('files'); setShowMore(false); }}><Paperclip size={16} /> Class materials</button><button onClick={() => { currentPanel('notes'); setShowMore(false); }}><FileText size={16} /> Private notes</button><button onClick={() => { changeStage('board'); setShowMore(false); }}><BookOpen size={16} /> Shared whiteboard</button><div className="reaction-picker">{['👏', '👍', '❤️', '😂', '🎉', '🙌'].map((emoji) => <button key={emoji} aria-label={`React ${emoji}`} onClick={() => { sendReaction(emoji); setShowMore(false); }}>{emoji}</button>)}</div>{session.role === 'teacher' && <button onClick={() => { setShowAnnouncement(true); setShowMore(false); }}><Bell size={16} /> Make announcement</button>}</div>}</div>
+        <div className="more-control-wrap"><button className="meeting-control" onClick={() => setShowMore((v) => !v)} title="More controls"><MoreHorizontal size={21} /><span>More</span></button>{showMore && <div className="more-popover"><button onClick={() => { currentPanel('people'); setShowMore(false); }}><Users size={16} /> People</button><button onClick={() => { currentPanel('files'); setShowMore(false); }}><Paperclip size={16} /> Class materials</button><button onClick={() => { currentPanel('notes'); setShowMore(false); }}><FileText size={16} /> Private notes</button><button onClick={() => { changeStage('board'); setShowMore(false); }}><BookOpen size={16} /> Shared whiteboard</button><button onClick={isRecording ? stopRecording : startRecording} className={isRecording ? 'recording-menu-action' : ''}>{isRecording ? <Square size={16} fill="currentColor" /> : <Circle size={16} />} {isRecording ? 'Stop and save recording' : 'Record class to this device'}</button><p className="recording-help">Choose this tab and enable tab audio in the browser picker to capture the class sound. Your file downloads when you stop.</p><div className="reaction-picker">{['👏', '👍', '❤️', '😂', '🎉', '🙌'].map((emoji) => <button key={emoji} aria-label={`React ${emoji}`} onClick={() => { sendReaction(emoji); setShowMore(false); }}>{emoji}</button>)}</div>{session.role === 'teacher' && <button onClick={() => { setShowAnnouncement(true); setShowMore(false); }}><Bell size={16} /> Make announcement</button>}</div>}</div>
       </div>
       <div className="meeting-control-right"><button className="leave-button" onClick={leave} title="Leave classroom"><PhoneOff size={19} /><span>Leave</span></button>{session.role === 'teacher' && <button className="end-meeting-button" onClick={endMeeting} title="End classroom for everyone"><X size={17} /> End for all</button>}</div>
     </footer>
@@ -311,7 +352,7 @@ function VideoTile({ participant, publication, displayName, isLocal, cameraOn, s
     <audio ref={audioRef} autoPlay muted={isLocal} />
     {!isScreen && !cameraOn && <div className="tile-avatar-state"><div className="tile-avatar">{(participant.name || participant.identity || '?').slice(0, 1).toUpperCase()}</div><span>{isLocal ? 'Your camera is off' : 'Camera off'}</span></div>}
     {isScreen && !cameraOn && <div className="tile-avatar-state"><MonitorUp size={28} /><span>Screen share unavailable</span></div>}
-    <div className="tile-overlay"><div className="tile-name"><span className="tile-live-dot" />{actualName}{isLocal ? ' (You)' : ''}</div><div className="tile-status-icons">{raised && <span className="raised-hand-badge"><Hand size={14} /></span>}{!isScreen && <span className={`mic-status ${micOn ? '' : 'mic-status-off'}`}>{micOn ? <Mic size={13} /> : <MicOff size={13} />}</span>}{isScreen && <span className="mic-status"><MonitorUp size={13} /></span>}</div></div>
+    <div className="tile-overlay"><div className="tile-name"><span className="tile-live-dot" />{actualName}{isLocal ? ' (You)' : ''}</div><div className="tile-status-icons">{raised && <span className="raised-hand-badge"><Hand size={14} /></span>}{!isScreen && <span className={`mic-status ${micOn ? '' : 'mic-status-off'} ${activeSpeaker ? 'mic-speaking' : ''}`}>{micOn ? <Mic size={13} /> : <MicOff size={13} />}</span>}{isScreen && <span className="mic-status"><MonitorUp size={13} /></span>}</div></div>
     {isLocal && isScreen && onStop && <button className="tile-stop-share" onClick={onStop}><Square size={12} fill="currentColor" /> Stop sharing</button>}
     <button className="tile-fullscreen" onClick={toggleFullscreen} aria-label={`View ${actualName} ${isScreen ? 'screen' : 'video'} fullscreen`} title="Full screen"><Maximize2 size={15} /></button>
     {isLocal && !isScreen && <span className="local-preview-pill">You</span>}
@@ -342,7 +383,7 @@ function ChatPanel({ messages, socket, participantId }: { messages: ChatMessage[
 function PeoplePanel({ participants, localParticipant, hands, session, socket, onAnnouncement }: {
   participants: Participant[]; localParticipant: Participant | null; hands: Record<string, boolean>; session: RoomSession; socket: Socket | null; onAnnouncement: () => void;
 }) {
-  return <div className="people-panel-content"><div className="people-count-line"><span>In this classroom</span><strong>{participants.length}</strong></div><div className="people-list">{participants.map((p) => <div className="person-row" key={p.sid || p.identity}><div className={`person-avatar ${p === localParticipant ? 'person-avatar-own' : ''}`}>{(p.name || p.identity).slice(0, 1).toUpperCase()}</div><div className="person-info"><strong>{p.name || p.identity}{p === localParticipant ? ' (You)' : ''}</strong><span>{p === localParticipant ? session.role === 'teacher' ? 'Host' : 'You' : 'Participant'}</span></div><div className="person-badges">{(hands[p.identity.replace(/^(guest|teacher)-/, '')] || hands[p.identity]) && <span className="raised-hand-badge"><Hand size={13} /></span>}{p.isMicrophoneEnabled ? <Mic size={15} /> : <MicOff size={15} className="muted-icon" />}{p.isCameraEnabled ? <Video size={15} /> : <VideoOff size={15} className="muted-icon" />}</div></div>)}</div>{session.role === 'teacher' && <button className="button button-outline button-wide announcement-action" onClick={onAnnouncement}><Bell size={16} /> Make announcement</button>}<div className="people-safety-note"><ShieldCheck size={16} /><span>Names in a guest classroom are self-selected and are not identity-verified.</span></div><button className="button button-quiet button-wide" onClick={() => socket?.emit('meeting:reaction', { emoji: '👏' })}><Sparkles size={16} /> Celebrate the class</button></div>;
+  return <div className="people-panel-content"><div className="people-count-line"><span>In this classroom</span><strong>{participants.length}</strong></div><div className="people-list">{participants.map((p) => <div className={`person-row ${p.isSpeaking ? 'person-speaking' : ''}`} key={p.sid || p.identity}><div className={`person-avatar ${p === localParticipant ? 'person-avatar-own' : ''}`}>{(p.name || p.identity).slice(0, 1).toUpperCase()}</div><div className="person-info"><strong>{p.name || p.identity}{p === localParticipant ? ' (You)' : ''}</strong><span>{p.isSpeaking ? 'Speaking' : p === localParticipant ? session.role === 'teacher' ? 'Host' : 'You' : 'Participant'}</span></div><div className="person-badges">{(hands[p.identity.replace(/^(guest|teacher)-/, '')] || hands[p.identity]) && <span className="raised-hand-badge"><Hand size={13} /></span>}{p.isMicrophoneEnabled ? <Mic size={15} className={p.isSpeaking ? 'person-mic-speaking' : ''} /> : <MicOff size={15} className="muted-icon" />}{p.isCameraEnabled ? <Video size={15} /> : <VideoOff size={15} className="muted-icon" />}</div></div>)}</div>{session.role === 'teacher' && <button className="button button-outline button-wide announcement-action" onClick={onAnnouncement}><Bell size={16} /> Make announcement</button>}<div className="people-safety-note"><ShieldCheck size={16} /><span>Names in a guest classroom are self-selected and are not identity-verified.</span></div><button className="button button-quiet button-wide" onClick={() => socket?.emit('meeting:reaction', { emoji: '👏' })}><Sparkles size={16} /> Celebrate the class</button></div>;
 }
 
 function FilesPanel({ files, session, refreshFiles, onError }: { files: ClassroomFile[]; session: RoomSession; refreshFiles: () => void; onError: (value: string) => void }) {

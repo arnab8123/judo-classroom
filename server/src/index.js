@@ -699,6 +699,9 @@ io.on('connection', (socket) => {
   socket.on('board:draw', (payload) => {
     if (!allowSocketEvent(socket, 'board:draw', 18, 5000)) return;
     if (!payload || typeof payload !== 'object' || !Array.isArray(payload.points) || payload.points.length > 3000) return;
+    const type = payload.type === 'text' ? 'text' : 'draw';
+    const text = type === 'text' ? String(payload.text || '').trim().slice(0, 500) : '';
+    if (type === 'text' && (!text || payload.points.length !== 1)) return;
     const id = String(payload.id || crypto.randomUUID()).slice(0, 100);
     if (db.prepare('SELECT 1 FROM board_events WHERE classroom_code=? AND object_id=? LIMIT 1').get(code, id)) {
       socket.emit('server:warning', { message: 'That whiteboard stroke ID is already in use. Draw the stroke again.' });
@@ -708,7 +711,7 @@ io.on('connection', (socket) => {
     const width = Math.min(28, Math.max(1, Number(payload.width) || 3));
     const tool = payload.tool === 'eraser' ? 'eraser' : 'pen';
     const points = payload.points.slice(0, 3000).map((p) => ({ x: Math.min(1, Math.max(0, Number(p?.x) || 0)), y: Math.min(1, Math.max(0, Number(p?.y) || 0)) }));
-    const stroke = { id, type: 'draw', tool, color, width, points, ownerName: session.displayName, ownerId: session.sessionId };
+    const stroke = { id, type, ...(type === 'text' ? { text } : {}), tool, color, width, points, ownerName: session.displayName, ownerId: session.sessionId };
     db.prepare('INSERT INTO board_events (id, classroom_code, object_id, owner_key, payload) VALUES (?, ?, ?, ?, ?)')
       .run(crypto.randomUUID(), code, id, session.ownerKey, JSON.stringify(stroke));
     db.prepare('DELETE FROM board_events WHERE classroom_code=? AND id NOT IN (SELECT id FROM board_events WHERE classroom_code=? ORDER BY created_at DESC, rowid DESC LIMIT 1200)').run(code, code);
