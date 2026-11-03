@@ -426,3 +426,5 @@
 
 :root[data-theme="dark"] .meet-footer a.orvina-credit .orvina-credit-by,:root[data-theme="dark"] .meet-footer a.orvina-credit:hover .orvina-credit-by{color:#fff!important}:root:not([data-theme="dark"]) .meet-footer a.orvina-credit .orvina-credit-by,:root:not([data-theme="dark"]) .meet-footer a.orvina-credit:hover .orvina-credit-by{color:#000!important}.meet-footer a.orvina-credit .orvina-credit-by,.meet-footer a.orvina-credit .orvina-credit-name{transition:color .5s ease}
 
+.share-popover .share-hint{margin:10px 0 0;color:var(--muted,#747b90);font-size:12px;line-height:1.4}
+

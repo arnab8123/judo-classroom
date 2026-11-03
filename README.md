@@ -1,6 +1,6 @@
 # Judo — Simple Video Classes
 
-Judo is a full-stack classroom app for a small language institute. The React website and Node API can run together as a single web service, while LiveKit carries the actual audio/video traffic. It is designed for a single API instance with persistent storage; it is not a static mockup, and it is not yet a feature-for-feature Google Meet replacement.
+Judo is a full-stack meeting app. The React website and Node API can run together as a single web service, while LiveKit carries the actual audio/video traffic. It is designed for a single API instance with persistent storage; it is not a static mockup, and it is not yet a feature-for-feature Google Meet replacement.
 
 ## Landing page and meeting creation
 
@@ -13,6 +13,7 @@ The home page uses a Google Meet-inspired single-screen layout with an orange-an
 - Guest joining by meeting link/code and display name without a student account.
 - Pre-join camera/microphone preview, toggles, and device selection where supported by the browser.
 - LiveKit/WebRTC audio and video, participant tiles, camera/microphone indicators, active-speaker styling, reconnection status, and leave controls.
+- Android screen sharing through the native MediaProjection API using the companion app in `android/`.
 - Independently tracked screen shares with optional captured audio. Capture of multiple displays and system/tab audio depends on browser and operating-system capabilities.
 - Socket.IO real-time chat and participant reactions, raised hands, teacher announcements, plus bounded chat history.
 - Collaborative whiteboard with pen, eraser, color/width, undo-own-stroke, teacher-only clear, and PNG export.
@@ -140,6 +141,14 @@ npm run dev
 ```
 
 You normally do not need to repeat `npm install` or `npm run seed` unless dependencies or the initial database setup changes.
+
+## Android app and phone screen sharing
+
+The native Android app in `android/` opens the hosted Judo website in a WebView and uses the Judo logo as its launcher icon. Join a meeting as usual. In the meeting controls, choose **Share phone screen**; Android displays its screen-capture approval prompt. Approve it to publish the phone display into that same Render/LiveKit room. A companion participant named with an “(Android)” suffix publishes the screen, so the browser meeting UI and moderation controls continue to work. Protected/DRM content may appear black.
+
+The native share handoff uses a short-lived participant token issued by Judo's server; the LiveKit server secret is never embedded in the APK. Camera and microphone access in the WebView use Android runtime permissions. HTTPS is required.
+
+To build an APK, install Android Studio with JDK 17 and Android SDK Platform 35, then open the `android/` directory and allow Gradle sync. Or run `cd android` followed by `./gradlew assembleDebug` (Windows: `gradlew.bat assembleDebug`). The APK is written to `android/app/build/outputs/apk/debug/app-debug.apk`.
 
 ## Recommended deployment: Render + LiveKit Cloud
 

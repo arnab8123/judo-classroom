@@ -13,6 +13,12 @@ import {
 } from '../api';
 import Whiteboard from '../components/Whiteboard';
 
+declare global {
+  interface Window {
+    dispatchEvent(event: Event): boolean;
+  }
+}
+
 export default function ClassroomView({ session, mediaChoice, onLeave, theme, onToggleTheme }: {
   session: RoomSession;
   mediaChoice: { cameraEnabled: boolean; micEnabled: boolean; cameraId: string; micId: string };
@@ -34,6 +40,7 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   const [files, setFiles] = useState<ClassroomFile[]>([]);
   const [shareAudio, setShareAudio] = useState(false);
   const [screenShares, setScreenShares] = useState<{ id: string; label: string; videoTrack: MediaStreamTrack; audioTrack?: MediaStreamTrack }[]>([]);
+  const [androidScreenSharing, setAndroidScreenSharing] = useState(false);
   const [reaction, setReaction] = useState<{ displayName: string; emoji: string; id: string } | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [showAnnouncement, setShowAnnouncement] = useState(false);
@@ -51,6 +58,19 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   shareRef.current = screenShares;
 
   const bump = useCallback(() => setRefreshKey((v) => v + 1), []);
+
+  useEffect(() => {
+    const onNativeShare = (event: Event) => {
+      const detail = (event as CustomEvent<{ active: boolean; error?: string; message?: string }>).detail;
+      setAndroidScreenSharing(Boolean(detail?.active));
+      if (detail?.error) setMediaError(detail.error);
+      if (detail?.active) setMediaError('');
+      if (detail?.message) setAnnouncement(detail.message);
+      bump();
+    };
+    window.addEventListener('judo-native-screen-share', onNativeShare);
+    return () => window.removeEventListener('judo-native-screen-share', onNativeShare);
+  }, [bump]);
 
   useEffect(() => {
     let active = true;
@@ -182,6 +202,14 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   const startScreenShare = async () => {
     if (!room) return;
     setShowShareMenu(false);
+    if (navigator.userAgent.includes('JudoAndroidApp')) {
+      const intent = new URL('judo://share');
+      intent.searchParams.set('room', session.room.code);
+      intent.searchParams.set('name', session.displayName);
+      intent.searchParams.set('server', window.location.origin);
+      window.location.assign(intent.toString());
+      return;
+    }
     if (!navigator.mediaDevices?.getDisplayMedia) { setMediaError('Screen sharing is not supported in this browser. Try a recent version of Chrome, Edge, or Firefox.'); return; }
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: { ideal: 15, max: 30 } }, audio: shareAudio });
@@ -220,6 +248,7 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
     stoppingSharesRef.current.delete(id);
     bump();
   };
+  const stopAndroidScreenShare = () => window.location.assign('judo://stop-share');
   const startRecording = async () => {
     setShowMore(false);
     if (!navigator.mediaDevices?.getDisplayMedia || typeof MediaRecorder === 'undefined') {
@@ -269,7 +298,7 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
     try { await endRoom(session.room.code); setEndedMessage('You ended this classroom.'); room?.disconnect(); }
     catch (err) { setMediaError(err instanceof Error ? err.message : 'Could not end classroom.'); }
   };
-  const leave = () => { if (room) room.disconnect(); onLeave(); };
+  const leave = () => { if (androidScreenSharing) stopAndroidScreenShare(); if (room) room.disconnect(); onLeave(); };
 
   const localCameraOn = room?.localParticipant.isCameraEnabled ?? mediaChoice.cameraEnabled;
   const localMicOn = room?.localParticipant.isMicrophoneEnabled ?? mediaChoice.micEnabled;
@@ -338,7 +367,7 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
       <div className="meeting-control-center">
         <button className={`meeting-control ${localMicOn ? '' : 'meeting-control-off'}`} onClick={toggleMic} title={localMicOn ? 'Mute microphone' : 'Unmute microphone'} aria-label={localMicOn ? 'Mute microphone' : 'Unmute microphone'}>{localMicOn ? <Mic size={20} /> : <MicOff size={20} />}<span>{localMicOn ? 'Mute' : 'Unmute'}</span></button>
         <button className={`meeting-control ${localCameraOn ? '' : 'meeting-control-off'}`} onClick={toggleCamera} title={localCameraOn ? 'Turn camera off' : 'Turn camera on'} aria-label={localCameraOn ? 'Turn camera off' : 'Turn camera on'}>{localCameraOn ? <Video size={20} /> : <VideoOff size={20} />}<span>{localCameraOn ? 'Camera' : 'Camera off'}</span></button>
-        <div className="share-control-wrap"><button className={`meeting-control meeting-share ${screenShares.length ? 'meeting-control-share-active' : ''}`} onClick={() => setShowShareMenu((v) => !v)} title="Share your screen"><MonitorUp size={20} /><span>Share screen</span><ChevronDown size={13} /></button>{showShareMenu && <div className="share-popover"><label className="checkbox-row"><input type="checkbox" checked={shareAudio} onChange={(e) => setShareAudio(e.target.checked)} /><span><strong>Also share tab/system audio</strong><small>Available sources depend on your browser.</small></span></label>{screenShares.map((share) => <div className="share-active-row" key={share.id}><span><MonitorUp size={15} /> {share.label} is being shared</span><button className="button button-outline button-small" onClick={() => stopScreenShare(share.id)}>Cancel share</button></div>)}<button className="button button-primary button-wide" onClick={startScreenShare}><MonitorUp size={16} /> {screenShares.length ? 'Share another screen' : 'Share a screen'}</button></div>}</div>
+        <div className="share-control-wrap"><button className={`meeting-control meeting-share ${screenShares.length || androidScreenSharing ? 'meeting-control-share-active' : ''}`} onClick={() => setShowShareMenu((v) => !v)} title="Share your screen"><MonitorUp size={20} /><span>Share screen</span><ChevronDown size={13} /></button>{showShareMenu && <div className="share-popover">{!navigator.userAgent.includes('JudoAndroidApp') && <label className="checkbox-row"><input type="checkbox" checked={shareAudio} onChange={(e) => setShareAudio(e.target.checked)} /><span><strong>Also share tab/system audio</strong><small>Available sources depend on your browser.</small></span></label>}{androidScreenSharing && <div className="share-active-row"><span><MonitorUp size={15} /> Phone screen is being shared</span><button className="button button-outline button-small" onClick={stopAndroidScreenShare}>Cancel share</button></div>}{screenShares.map((share) => <div className="share-active-row" key={share.id}><span><MonitorUp size={15} /> {share.label} is being shared</span><button className="button button-outline button-small" onClick={() => stopScreenShare(share.id)}>Cancel share</button></div>)}<button className="button button-primary button-wide" onClick={startScreenShare} disabled={androidScreenSharing && navigator.userAgent.includes('JudoAndroidApp')}><MonitorUp size={16} /> {navigator.userAgent.includes('JudoAndroidApp') ? (androidScreenSharing ? 'Phone screen shared' : 'Share phone screen') : (screenShares.length ? 'Share another screen' : 'Share a screen')}</button>{navigator.userAgent.includes('JudoAndroidApp') && !androidScreenSharing && <p className="share-hint">Android will ask you to approve screen capture.</p>}</div>}</div>
         <button className={`meeting-control ${raised ? 'meeting-control-hand-raised' : ''}`} onClick={toggleHand} title={raised ? 'Lower hand' : 'Raise hand'} aria-label={raised ? 'Lower hand' : 'Raise hand'}>{raised ? <Hand size={20} fill="currentColor" /> : <Hand size={20} />}<span>{raised ? 'Lower hand' : 'Raise hand'}</span></button>
         <button className="meeting-control" onClick={() => currentPanel('chat')} title="Open chat"><MessageCircle size={20} /><span>Chat</span>{chatMessages.length > 0 && <span className="control-badge">{chatMessages.length > 99 ? '99+' : chatMessages.length}</span>}</button>
         <div className="more-control-wrap"><button className="meeting-control" onClick={() => setShowMore((v) => !v)} title="More controls"><MoreHorizontal size={21} /><span>More</span></button>{showMore && <div className="more-popover"><button onClick={() => { currentPanel('people'); setShowMore(false); }}><Users size={16} /> People</button><button onClick={() => { currentPanel('files'); setShowMore(false); }}><Paperclip size={16} /> Class materials</button><button onClick={() => { currentPanel('notes'); setShowMore(false); }}><FileText size={16} /> Private notes</button><button onClick={() => { changeStage('board'); setShowMore(false); }}><BookOpen size={16} /> Shared whiteboard</button><button onClick={isRecording ? stopRecording : startRecording} className={isRecording ? 'recording-menu-action' : ''}>{isRecording ? <Square size={16} fill="currentColor" /> : <Circle size={16} />} {isRecording ? 'Stop and save recording' : 'Record class to this device'}</button><div className="reaction-picker">{['👏', '👍', '❤️', '😂', '🎉', '🙌'].map((emoji) => <button key={emoji} aria-label={`React ${emoji}`} onClick={() => { sendReaction(emoji); setShowMore(false); }}>{emoji}</button>)}</div>{session.role === 'teacher' && <button onClick={() => { setShowAnnouncement(true); setShowMore(false); }}><Bell size={16} /> Make announcement</button>}</div>}</div>

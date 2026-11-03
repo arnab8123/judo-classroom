@@ -10,5 +10,10 @@ server/.env
 client/.env
 .DS_Store
 *.log
+*.apk
 
 server/backups/
+
+android/.gradle/
+android/local.properties
+android/**/build/
