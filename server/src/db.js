@@ -109,6 +109,12 @@ CREATE TABLE IF NOT EXISTS uploads (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_uploads_room ON uploads(classroom_code, created_at DESC);
+CREATE TABLE IF NOT EXISTS room_blocks (
+  classroom_code TEXT NOT NULL,
+  participant_key TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (classroom_code, participant_key)
+);
 `);
 
 // Backward-compatible schema upgrade for databases created by earlier versions.

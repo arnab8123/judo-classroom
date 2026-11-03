@@ -338,6 +338,17 @@
 .person-speaking .person-info>span{color:#20916c;font-weight:700}
 .person-mic-speaking{color:#20916c;animation:micPulse 1.15s ease-in-out infinite}
 @keyframes micPulse{50%{transform:scale(1.16);filter:drop-shadow(0 0 4px #32b88b88)}}
+
+/* Keep controls in their own corners and let flex rows size to the tile itself. */
+.tile-stop-share{right:46px}
+.tile-pin{position:absolute;z-index:5;top:9px;left:9px;min-width:30px;height:30px;display:flex;align-items:center;justify-content:center;gap:5px;padding:0 8px;border:1px solid #ffffff55;border-radius:8px;background:#171923a8;color:#fff;opacity:.82;cursor:pointer}
+.tile-pin:hover,.tile-pin-active{opacity:1;background:#6558d5}
+.tile-pin span{font-size:9px;font-weight:700}
+.person-moderation{display:flex;align-items:center;gap:2px;flex:none}
+.person-moderation button{width:21px;height:21px;display:grid;place-items:center;padding:0;border:0;border-radius:6px;background:var(--soft);color:var(--muted);cursor:pointer}
+.person-moderation button:hover{background:var(--line);color:var(--ink)}
+.person-moderation .person-remove-button{color:#d44755}
+.person-moderation .person-remove-button:hover{background:#fff0f1;color:#bd3040}
 @media(max-width:760px){
   .meeting-header-actions .meeting-clock{display:flex}
   .video-grid-panel-closed,.video-grid-panel-open{grid-template-columns:minmax(0,1fr);grid-template-rows:none;grid-auto-rows:auto;align-content:start;justify-items:stretch;gap:8px;padding:0 1px 8px;height:100%;min-height:0}
@@ -365,31 +376,29 @@
   .stage-toolbar-right .button{padding-inline:5px;font-size:8px}
   .meeting-control-center{overflow:visible}
   .meeting-control-center .meeting-control{min-width:36px;width:36px}
+  .person-moderation{gap:1px}
+  .person-moderation button{width:20px;height:22px}
 }
 
 /* Keep participant tiles in a scrollable, non-overlapping grid. Each row is sized
    from the 4:3 tile ratio; additional participants continue below the first two rows. */
 .meeting-stage .video-grid.video-grid-panel-closed,
 .meeting-stage .video-grid.video-grid-panel-open{
+  display:flex;
+  flex-flow:row wrap;
   flex:1 1 0%;
   height:auto;
   min-height:0;
   overflow-x:hidden;
   overflow-y:auto;
   overscroll-behavior:contain;
-  align-content:start;
-  align-items:start;
-  grid-auto-flow:row;
-  /* `auto` was distributing the available grid height across implicit rows.
-     That made row tracks shorter than the 4:3 cards, so later cards painted
-     over the first row. Size every row to its tile's intrinsic height. */
-  grid-auto-rows:max-content;
-  grid-template-rows:none;
+  align-content:flex-start;
+  align-items:flex-start;
   gap:10px;
   padding:0 10px 10px;
 }
-.meeting-stage .video-grid.video-grid-panel-closed{grid-template-columns:repeat(5,minmax(0,1fr))}
-.meeting-stage .video-grid.video-grid-panel-open{grid-template-columns:repeat(4,minmax(0,1fr))}
+.meeting-stage .video-grid.video-grid-panel-closed .video-tile{flex:0 0 calc((100% - 40px)/5)}
+.meeting-stage .video-grid.video-grid-panel-open .video-tile{flex:0 0 calc((100% - 30px)/4)}
 .meeting-stage .video-grid.video-grid-panel-closed .video-tile,
 .meeting-stage .video-grid.video-grid-panel-open .video-tile{
   width:100%;
@@ -401,10 +410,10 @@
 @media(max-width:760px){
   .meeting-stage .video-grid.video-grid-panel-closed,
   .meeting-stage .video-grid.video-grid-panel-open{
-    grid-template-columns:minmax(0,1fr);
-    grid-template-rows:none;
-    grid-auto-rows:max-content;
+    flex-flow:column nowrap;
     gap:10px;
     padding:0 10px 10px;
   }
+  .meeting-stage .video-grid.video-grid-panel-closed .video-tile,
+  .meeting-stage .video-grid.video-grid-panel-open .video-tile{flex:0 0 auto;width:100%}
 }

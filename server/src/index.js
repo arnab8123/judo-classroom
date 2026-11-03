@@ -439,6 +439,9 @@ app.post('/api/rooms/:code/join', async (req, res) => {
     const isHost = Boolean(teacher && teacher.userId === room.host_user_id);
     const role = isHost ? 'teacher' : 'participant';
     const ownerKey = isHost ? `teacher:${teacher.userId}` : `guest:${guestKey}`;
+    if (!isHost && db.prepare('SELECT 1 FROM room_blocks WHERE classroom_code=? AND participant_key=?').get(code, ownerKey)) {
+      return res.status(403).json({ error: 'The host removed you from this classroom.' });
+    }
     const sessionId = crypto.randomUUID();
     const sessionToken = signAppToken({
       ownerKey,
@@ -538,6 +541,7 @@ app.delete('/api/rooms/:code', requireTeacher, (req, res) => {
     db.prepare('DELETE FROM board_events WHERE classroom_code=?').run(code);
     db.prepare('DELETE FROM notes WHERE classroom_code=?').run(code);
     db.prepare('DELETE FROM uploads WHERE classroom_code=?').run(code);
+    db.prepare('DELETE FROM room_blocks WHERE classroom_code=?').run(code);
     db.prepare('DELETE FROM classrooms WHERE code=? AND host_user_id=? AND active=0').run(code, req.teacher.userId);
   });
   removeRows();
@@ -640,6 +644,9 @@ io.use((socket, next) => {
     if (!claims.roomCode || !claims.ownerKey || !claims.sessionId) return next(new Error('Invalid classroom session.'));
     const room = db.prepare('SELECT active FROM classrooms WHERE code=?').get(normalizeCode(claims.roomCode));
     if (!room || !room.active) return next(new Error('This classroom has ended.'));
+    if (claims.role !== 'teacher' && db.prepare('SELECT 1 FROM room_blocks WHERE classroom_code=? AND participant_key=?').get(normalizeCode(claims.roomCode), claims.ownerKey)) {
+      return next(new Error('The host removed you from this classroom.'));
+    }
     socket.data.session = claims;
     next();
   } catch { next(new Error('Your session has expired. Rejoin the classroom.')); }
@@ -697,6 +704,49 @@ io.on('connection', (socket) => {
     if (!['video', 'board'].includes(data?.stage)) return;
     roomStages.set(code, data.stage);
     io.to(code).emit('room:stage', { stage: data.stage });
+  });
+  socket.on('host:participant-control', async (data) => {
+    if (session.role !== 'teacher') return;
+    if (!allowSocketEvent(socket, 'host:participant-control', 12, 10_000)) return;
+    const action = String(data?.action || '');
+    const identity = String(data?.identity || '');
+    const allowedActions = new Set(['mute-microphone', 'disable-camera', 'stop-screen-share', 'remove']);
+    if (!allowedActions.has(action) || !/^guest-[0-9a-f-]{36}$/i.test(identity)) return;
+    const classroom = db.prepare('SELECT host_user_id FROM classrooms WHERE code=? AND active=1').get(code);
+    if (!session.userId || !classroom || classroom.host_user_id !== session.userId) {
+      socket.emit('server:warning', { message: 'Only this classroom’s host can manage participants.' });
+      return;
+    }
+    const participantId = identity.slice('guest-'.length);
+    try {
+      const participant = await roomService.getParticipant(code, identity);
+      if (action === 'remove') {
+        const sockets = await io.in(code).fetchSockets();
+        const target = sockets.find((candidate) => candidate.data.session?.sessionId === participantId && candidate.data.session?.ownerKey?.startsWith('guest:'));
+        if (target) {
+          db.prepare('INSERT OR IGNORE INTO room_blocks (classroom_code, participant_key) VALUES (?, ?)').run(code, target.data.session.ownerKey);
+        }
+        await roomService.removeParticipant(code, identity);
+        if (target) {
+          target.emit('meeting:kicked', { message: 'The host removed you from this classroom.' });
+          target.disconnect(true);
+        }
+        socket.emit('server:warning', { message: `${participant.name || 'Participant'} was removed from the classroom.` });
+        return;
+      }
+      const sources = action === 'mute-microphone' ? [2] : action === 'disable-camera' ? [1] : [3, 4];
+      const tracks = (participant.tracks || []).filter((track) => sources.includes(track.source) && !track.muted && track.sid);
+      if (!tracks.length) {
+        socket.emit('server:warning', { message: 'That participant has no active track for this action.' });
+        return;
+      }
+      await Promise.all(tracks.map((track) => roomService.mutePublishedTrack(code, identity, track.sid, true)));
+      const label = action === 'mute-microphone' ? 'Microphone muted.' : action === 'disable-camera' ? 'Camera turned off.' : 'Screen sharing stopped.';
+      socket.emit('server:warning', { message: label });
+    } catch (error) {
+      console.warn('Host participant control failed:', error?.message || error);
+      socket.emit('server:warning', { message: 'Could not apply that participant action. Try again.' });
+    }
   });
   socket.on('board:draw', (payload) => {
     if (!allowSocketEvent(socket, 'board:draw', 18, 5000)) return;
