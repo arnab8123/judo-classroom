@@ -419,3 +419,5 @@
 }
 
 .brand-mark-logo{overflow:hidden;background:#ff431f!important;box-shadow:none!important}.brand-mark-logo img{display:block;width:100%;height:100%;object-fit:cover}
+
+.orvina-credit{display:inline-flex;align-items:center;gap:7px;color:var(--meet-muted);text-decoration:none}.orvina-credit img{width:25px;height:25px;border-radius:50%;object-fit:contain;background:#0a0d15}.orvina-credit strong{color:#398cff;font-weight:600}.orvina-credit:hover span{color:var(--meet-text)}
