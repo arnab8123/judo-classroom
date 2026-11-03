@@ -380,7 +380,10 @@
   align-content:start;
   align-items:start;
   grid-auto-flow:row;
-  grid-auto-rows:auto;
+  /* `auto` was distributing the available grid height across implicit rows.
+     That made row tracks shorter than the 4:3 cards, so later cards painted
+     over the first row. Size every row to its tile's intrinsic height. */
+  grid-auto-rows:max-content;
   grid-template-rows:none;
   gap:10px;
   padding:0 10px 10px;
@@ -400,7 +403,7 @@
   .meeting-stage .video-grid.video-grid-panel-open{
     grid-template-columns:minmax(0,1fr);
     grid-template-rows:none;
-    grid-auto-rows:auto;
+    grid-auto-rows:max-content;
     gap:10px;
     padding:0 10px 10px;
   }
