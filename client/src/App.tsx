@@ -2,7 +2,7 @@ import type React from 'react';
 import { useEffect, useState } from 'react';
 import {
   ArrowRight, BookOpen, CalendarClock, CalendarDays, Check, CheckCircle2,
-  ChevronDown, ChevronRight, Copy, GraduationCap, Link2, Moon,
+  ChevronDown, ChevronRight, Copy, Download, GraduationCap, Link2, Moon,
   ShieldCheck, Sun, Video, X, Zap
 } from 'lucide-react';
 import { Classroom, RoomSession, createRoom, finishOAuth, getTeacherToken, getTeacherUser, joinRoom, lookupRoom, logoutTeacher, saveTeacherSession } from './api';
@@ -254,6 +254,7 @@ function LandingPage({ onJoin, error, onTeacher, initialCode, theme, onToggleThe
           <h1>Join your class.<br /><span>Start learning.</span></h1>
           <p className="meet-hero-description">Enter your name and class code to join. Students do not need an account.</p>
           <div className="meet-trust-points"><span><CheckCircle2 size={16} /> Join with a link or code</span><span><CheckCircle2 size={16} /> Guests join with a link</span></div>
+          <a className="meet-download-app" href="/Judo-Android-WebView.apk" download="Judo-Android.apk"><Download size={16} /> Download the Android app</a>
           <details className="teacher-actions">
             <summary><span className="teacher-actions-icon"><GraduationCap size={19} /></span><span><strong>Need a meeting room?</strong><small>Start, schedule, or create a meeting room</small></span><ChevronDown className="teacher-actions-chevron" size={18} /></summary>
             <div className="teacher-action-list">

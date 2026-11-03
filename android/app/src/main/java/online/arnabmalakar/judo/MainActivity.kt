@@ -246,6 +246,7 @@ class MainActivity : ComponentActivity() {
 
         private fun routeUri(uri: Uri): Boolean {
             if (uri.scheme == "judo") {
+                if (!isJudoHost(Uri.parse(webView.url ?: HOME_URL).host)) return true
                 handleShareDeepLink(Intent(Intent.ACTION_VIEW, uri))
                 return true
             }

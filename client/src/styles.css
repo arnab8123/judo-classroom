@@ -428,3 +428,8 @@
 
 .share-popover .share-hint{margin:10px 0 0;color:var(--muted,#747b90);font-size:12px;line-height:1.4}
 
+.meet-download-app{display:inline-flex;align-items:center;gap:9px;margin-top:20px;padding:11px 15px;border:1px solid var(--meet-border);border-radius:11px;background:var(--meet-surface);color:var(--meet-text);font-size:12px;font-weight:700;text-decoration:none;box-shadow:0 4px 14px rgba(20,20,20,.04);transition:color .18s,border-color .18s,background .18s,transform .18s}
+.meet-download-app svg{color:var(--meet-orange)}
+.meet-download-app:hover{border-color:var(--meet-orange);background:var(--meet-soft);transform:translateY(-1px)}
+@media(max-width:600px){.meet-download-app{margin-top:16px;padding:10px 13px;font-size:11px}}
+
