@@ -1,6 +1,6 @@
 {
-  "versionCode": 5,
-  "versionName": "1.0.4",
+  "versionCode": 6,
+  "versionName": "1.0.5",
   "apkUrl": "https://judomeet.online/downloads/android/latest.apk",
-  "releaseNotes": "Sets the top spacing to 10 dp while keeping status bar and camera cutout safe areas."
+  "releaseNotes": "Simplifies the app home screen to the join form, header, and footer."
 }

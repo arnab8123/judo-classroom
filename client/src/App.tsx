@@ -194,6 +194,7 @@ function LandingPage({ onJoin, error, onTeacher, initialCode, theme, onToggleThe
   onCloseInvite: () => void;
   onJoinCreated: (code: string) => void;
 }) {
+  const isAndroidApp = typeof navigator !== 'undefined' && navigator.userAgent.includes('JudoAndroidApp');
   const [name, setName] = useState('');
   const [code, setCode] = useState(initialCode);
   const [busy, setBusy] = useState(false);
@@ -270,7 +271,7 @@ function LandingPage({ onJoin, error, onTeacher, initialCode, theme, onToggleThe
     }
   };
 
-  return <div className={`meet-landing-shell theme-${theme}`}>
+  return <div className={`meet-landing-shell theme-${theme}${isAndroidApp ? ' android-app-landing' : ''}`}>
     <header className="topbar meet-topbar">
       <a className="brand meet-brand" href="#top" aria-label="Judo home"><span className="brand-mark brand-mark-logo"><img src="/judo-logo.svg" alt="" /></span><span>Judo</span></a>
       <div className="meet-top-right"><span className="meet-top-caption"><span className="online-dot" /> Simple video meetings</span><button className="theme-toggle" onClick={onToggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>{theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}<span>{theme === 'light' ? 'Dark mode' : 'Light mode'}</span></button><button className="button button-quiet meet-teacher-button" onClick={onTeacher}>{teacherUser ? 'Host dashboard' : 'Host sign in'} <ChevronRight size={16} /></button></div>

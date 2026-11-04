@@ -299,6 +299,10 @@
 .meet-join-form .button-primary{height:50px;margin-top:8px;border-radius:10px;font-size:13px}
 .meet-join-foot{margin-top:18px;padding-top:14px;font-size:10px}
 .meet-footer{max-width:1320px;min-height:58px;padding-inline:28px;font-size:10px}
+.android-app-landing .meet-main{min-height:calc(100svh - 134px);padding-top:24px;padding-bottom:24px}
+.android-app-landing .meet-hero{display:block;max-width:680px;margin-inline:auto}
+.android-app-landing .meet-hero-copy{display:none}
+.android-app-landing .meet-join-column{max-width:620px;margin-inline:auto}
 @media(max-width:850px){
   .meet-main{min-height:0;padding:44px 22px}
   .meet-hero{grid-template-columns:1fr;gap:32px}
