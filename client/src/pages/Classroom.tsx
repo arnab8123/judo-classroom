@@ -16,7 +16,7 @@ import Whiteboard from '../components/Whiteboard';
 declare global {
   interface Window {
     dispatchEvent(event: Event): boolean;
-    JudoNative?: { setMeetingActive(active: boolean): void; setAudioOutput(output: string): void; resetAudioOutput(): void };
+    JudoNative?: { setMeetingActive(active: boolean, title: string): void; setAudioOutput(output: string): void; resetAudioOutput(): void };
   }
 }
 
@@ -77,10 +77,10 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   const bump = useCallback(() => setRefreshKey((v) => v + 1), []);
 
   useEffect(() => {
-    window.JudoNative?.setMeetingActive(true);
+    window.JudoNative?.setMeetingActive(true, session.room.title);
     window.JudoNative?.setAudioOutput('speaker');
     return () => {
-      window.JudoNative?.setMeetingActive(false);
+      window.JudoNative?.setMeetingActive(false, session.room.title);
       window.JudoNative?.resetAudioOutput();
     };
   }, []);

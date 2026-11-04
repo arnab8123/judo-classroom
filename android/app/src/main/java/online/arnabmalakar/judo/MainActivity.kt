@@ -3,6 +3,9 @@ package online.arnabmalakar.judo
 import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -23,10 +26,13 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.JavascriptInterface
 import android.widget.Toast
+import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -52,6 +58,7 @@ import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
+    private lateinit var appContainer: FrameLayout
     private var shareRoom: Room? = null
     private var classroomSocket: Socket? = null
     private var pendingCapture: Intent? = null
@@ -62,6 +69,7 @@ class MainActivity : ComponentActivity() {
     private var nativeMicEnabled = false
     private val keepAliveStarted = AtomicBoolean(false)
     private var meetingActiveRequested = false
+    private var meetingTitle = "Live class"
     private var notificationPermissionRequestPending = false
     private var updateInProgress = false
     private var pendingUpdateInstall: File? = null
@@ -121,8 +129,9 @@ class MainActivity : ComponentActivity() {
             isAppearanceLightStatusBars = true
             isAppearanceLightNavigationBars = true
         }
+        createNotificationChannels()
         webView = WebView(this).apply {
-            layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
             setBackgroundColor(android.graphics.Color.rgb(251, 251, 251))
             clipToPadding = true
             settings.javaScriptEnabled = true
@@ -138,16 +147,22 @@ class MainActivity : ComponentActivity() {
             webViewClient = JudoWebViewClient()
             webChromeClient = JudoWebChromeClient()
         }
-        setContentView(webView)
-        ViewCompat.setOnApplyWindowInsetsListener(webView) { view, windowInsets ->
+        appContainer = FrameLayout(this).apply {
+            setBackgroundColor(android.graphics.Color.rgb(251, 251, 251))
+            addView(webView)
+        }
+        setContentView(appContainer)
+        ViewCompat.setOnApplyWindowInsetsListener(appContainer) { _, windowInsets ->
             val safeInsets = windowInsets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
             val extraTopGap = (95 * resources.displayMetrics.density).roundToInt()
-            view.setPadding(safeInsets.left, safeInsets.top + extraTopGap, safeInsets.right, safeInsets.bottom)
-            windowInsets
+            val params = webView.layoutParams as FrameLayout.LayoutParams
+            params.setMargins(safeInsets.left, safeInsets.top + extraTopGap, safeInsets.right, safeInsets.bottom)
+            webView.layoutParams = params
+            WindowInsetsCompat.CONSUMED
         }
-        ViewCompat.requestApplyInsets(webView)
+        ViewCompat.requestApplyInsets(appContainer)
         android.webkit.CookieManager.getInstance().setAcceptCookie(true)
         android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
         handleShareDeepLink(intent)
@@ -167,6 +182,40 @@ class MainActivity : ComponentActivity() {
         preferences.edit().putBoolean(NOTIFICATION_PERMISSION_ASKED, true).apply()
         notificationPermissionRequestPending = true
         notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    private fun createNotificationChannels() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val manager = getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(NotificationChannel(
+            UPDATE_NOTIFICATION_CHANNEL,
+            "Judo updates",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply { description = "Alerts when a new Judo app update is available." })
+    }
+
+    private fun showUpdateNotification(update: AppUpdate) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasPermission(Manifest.permission.POST_NOTIFICATIONS)) return
+        val preferences = getSharedPreferences(UPDATE_PREFERENCES, MODE_PRIVATE)
+        if (preferences.getInt(NOTIFIED_VERSION, 0) == update.versionCode) return
+        val openApp = PendingIntent.getActivity(
+            this,
+            UPDATE_NOTIFICATION_ID,
+            Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+        val details = "Version ${update.versionName} is ready to install.${if (update.releaseNotes.isNotBlank()) " ${update.releaseNotes}" else ""}"
+        val notification = NotificationCompat.Builder(this, UPDATE_NOTIFICATION_CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_judo)
+            .setContentTitle("Judo update available")
+            .setContentText(details)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(details))
+            .setContentIntent(openApp)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+        NotificationManagerCompat.from(this).notify(UPDATE_NOTIFICATION_ID, notification)
+        preferences.edit().putInt(NOTIFIED_VERSION, update.versionCode).apply()
     }
 
     private fun checkForAppUpdate() {
@@ -191,6 +240,7 @@ class MainActivity : ComponentActivity() {
             if (update.versionCode <= currentVersion) return@launch
             val preferences = getSharedPreferences(UPDATE_PREFERENCES, MODE_PRIVATE)
             if (preferences.getInt("laterVersion", 0) == update.versionCode) return@launch
+            showUpdateNotification(update)
             AlertDialog.Builder(this@MainActivity)
                 .setTitle("Judo update available")
                 .setMessage("Version ${update.versionName} is ready to install.${if (update.releaseNotes.isNotBlank()) "\n\n${update.releaseNotes}" else ""}")
@@ -476,7 +526,8 @@ class MainActivity : ComponentActivity() {
             return
         }
         try {
-            ContextCompat.startForegroundService(this, Intent(this, MeetingKeepAliveService::class.java))
+            ContextCompat.startForegroundService(this, Intent(this, MeetingKeepAliveService::class.java)
+                .putExtra(MeetingKeepAliveService.EXTRA_CLASS_TITLE, meetingTitle))
         } catch (_: Exception) {
             keepAliveStarted.set(false)
             Toast.makeText(this, "Judo could not keep the meeting active in the background.", Toast.LENGTH_LONG).show()
@@ -565,7 +616,7 @@ class MainActivity : ComponentActivity() {
 
     private inner class MeetingLifecycleBridge {
         @JavascriptInterface
-        fun setMeetingActive(active: Boolean) {
+        fun setMeetingActive(active: Boolean, title: String?) {
             // The bridge is available only to Judo's first-party page. Keep this
             // origin check here as well as in the WebView navigation client.
             runOnUiThread {
@@ -573,6 +624,7 @@ class MainActivity : ComponentActivity() {
                 if (!isJudoHost(host)) return@runOnUiThread
                 if (active) {
                     meetingActiveRequested = true
+                    meetingTitle = title?.trim()?.take(120)?.ifBlank { "Live class" } ?: "Live class"
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasPermission(Manifest.permission.POST_NOTIFICATIONS)) {
                         if (!notificationPermissionRequestPending) {
                             notificationPermissionRequestPending = true
@@ -695,9 +747,12 @@ class MainActivity : ComponentActivity() {
     companion object {
         private const val HOME_URL = "https://judomeet.online/"
         private const val NOTIFICATION_PREFERENCES = "judo_notifications"
-        private const val NOTIFICATION_PERMISSION_ASKED = "startup_permission_asked"
+        private const val NOTIFICATION_PERMISSION_ASKED = "startup_permission_asked_v4"
         private const val UPDATE_INFO_URL = "https://judomeet.online/android-update.json"
         private const val UPDATE_PREFERENCES = "android_app_updates"
+        private const val NOTIFIED_VERSION = "notifiedVersion"
+        private const val UPDATE_NOTIFICATION_CHANNEL = "judo_app_updates"
+        private const val UPDATE_NOTIFICATION_ID = 9105
         private const val MAX_UPDATE_SIZE = 200L * 1024L * 1024L
     }
 }

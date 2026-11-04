@@ -20,16 +20,20 @@ class MeetingKeepAliveService : Service() {
         super.onCreate()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(CHANNEL_ID, "Judo meeting", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "Keeps your Judo meeting connected while the app is minimized."
+                description = "Shows the class that is currently live in Judo."
                 setShowBadge(false)
             }
             getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
         }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val classTitle = intent?.getStringExtra(EXTRA_CLASS_TITLE)?.take(120)?.ifBlank { "Live class" } ?: "Live class"
         val openIntent = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_judo)
-            .setContentTitle("Judo meeting is active")
-            .setContentText("Your meeting stays connected while Judo is in the background.")
+            .setContentTitle("$classTitle is live")
+            .setContentText("Tap to return to your Judo class.")
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setContentIntent(openIntent)
             .setOngoing(true)
@@ -45,7 +49,7 @@ class MeetingKeepAliveService : Service() {
             }
             if (serviceTypes == 0) {
                 stopSelf()
-                return
+                return START_NOT_STICKY
             }
             startForeground(NOTIFICATION_ID, notification, serviceTypes)
             foregroundStarted = true
@@ -53,14 +57,13 @@ class MeetingKeepAliveService : Service() {
             startForeground(NOTIFICATION_ID, notification)
             foregroundStarted = true
         }
+        return if (foregroundStarted) START_STICKY else START_NOT_STICKY
     }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int =
-        if (foregroundStarted) START_STICKY else START_NOT_STICKY
     override fun onBind(intent: Intent?): IBinder? = null
 
     companion object {
         const val CHANNEL_ID = "judo_meeting_active"
         const val NOTIFICATION_ID = 9104
+        const val EXTRA_CLASS_TITLE = "class_title"
     }
 }
