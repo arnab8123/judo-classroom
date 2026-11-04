@@ -433,3 +433,15 @@
 .meet-download-app:hover{border-color:var(--meet-orange);background:var(--meet-soft);transform:translateY(-1px)}
 @media(max-width:600px){.meet-download-app{margin-top:16px;padding:10px 13px;font-size:11px}}
 
+.announcement-overlay{position:fixed;inset:0;z-index:75;display:grid;place-items:center;padding:24px;background:rgba(15,16,20,.48);backdrop-filter:blur(5px);animation:fadeIn .18s ease}
+.announcement-popup{width:min(560px,100%);padding:0 24px 25px;border:1px solid rgba(255,255,255,.23);border-radius:20px;color:#fff;background:linear-gradient(145deg,#8f1722 0%,#c92f3a 58%,#a81e2b 100%);box-shadow:0 0 0 5px rgba(224,50,65,.12),0 0 48px 12px rgba(220,35,52,.42),0 26px 75px rgba(0,0,0,.36);animation:announcementPop .24s cubic-bezier(.2,.8,.2,1)}
+.announcement-popup-header{min-height:58px;display:flex;align-items:center;justify-content:space-between;gap:14px;border-bottom:1px solid rgba(255,255,255,.2)}
+.announcement-popup-header>span{display:flex;align-items:center;gap:9px;color:#fff;font-size:12px;font-weight:800;letter-spacing:.3px;text-transform:uppercase}
+.announcement-popup-header>span svg{filter:drop-shadow(0 0 5px rgba(255,255,255,.55))}
+.announcement-popup-header button{width:34px;height:34px;display:grid;place-items:center;border:1px solid rgba(255,255,255,.22);border-radius:10px;background:rgba(55,0,5,.16);color:#fff;cursor:pointer}
+.announcement-popup-header button:hover{background:rgba(55,0,5,.35)}
+.announcement-popup p{margin:22px 0 0;color:#fff;font-size:clamp(17px,2.2vw,23px);font-weight:650;line-height:1.55;white-space:pre-wrap;overflow-wrap:anywhere;text-align:center;text-shadow:0 1px 10px rgba(74,0,5,.28)}
+@keyframes announcementPop{from{opacity:0;transform:translateY(10px) scale(.96)}to{opacity:1;transform:translateY(0) scale(1)}}
+@media(max-width:600px){.announcement-overlay{padding:18px}.announcement-popup{padding:0 18px 21px;border-radius:17px}.announcement-popup-header{min-height:53px}.announcement-popup p{font-size:18px;margin-top:19px}}
+@media(prefers-reduced-motion:reduce){.announcement-popup{animation:none}}
+
