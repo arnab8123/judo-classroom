@@ -1,6 +1,6 @@
 {
-  "versionCode": 6,
-  "versionName": "1.0.5",
+  "versionCode": 7,
+  "versionName": "1.0.6",
   "apkUrl": "https://judomeet.online/downloads/android/latest.apk",
-  "releaseNotes": "Simplifies the app home screen to the join form, header, and footer."
+  "releaseNotes": "Lifts the join form above the Android keyboard while typing."
 }

@@ -195,6 +195,7 @@ function LandingPage({ onJoin, error, onTeacher, initialCode, theme, onToggleThe
   onJoinCreated: (code: string) => void;
 }) {
   const isAndroidApp = typeof navigator !== 'undefined' && navigator.userAgent.includes('JudoAndroidApp');
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
   const [name, setName] = useState('');
   const [code, setCode] = useState(initialCode);
   const [busy, setBusy] = useState(false);
@@ -211,6 +212,51 @@ function LandingPage({ onJoin, error, onTeacher, initialCode, theme, onToggleThe
       return value && typeof value.code === 'string' && typeof value.displayName === 'string' ? value : null;
     } catch { return null; }
   });
+
+  useEffect(() => {
+    if (!isAndroidApp) return;
+    const viewport = window.visualViewport;
+    let baselineHeight = viewport?.height ?? window.innerHeight;
+    let joinInputFocused = false;
+    let blurTimer = 0;
+    const currentHeight = () => viewport?.height ?? window.innerHeight;
+    const updateKeyboardState = () => {
+      const height = currentHeight();
+      if (!joinInputFocused) {
+        baselineHeight = height;
+        setKeyboardOpen(false);
+        return;
+      }
+      setKeyboardOpen(height < baselineHeight - 100);
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      if (!(event.target instanceof HTMLInputElement) || !event.target.closest('.meet-join-card')) return;
+      joinInputFocused = true;
+      baselineHeight = Math.max(baselineHeight, currentHeight());
+      window.setTimeout(updateKeyboardState, 150);
+    };
+    const onFocusOut = () => {
+      window.clearTimeout(blurTimer);
+      blurTimer = window.setTimeout(() => {
+        const activeElement = document.activeElement;
+        if (!(activeElement instanceof HTMLInputElement) || !activeElement.closest('.meet-join-card')) {
+          joinInputFocused = false;
+        }
+        updateKeyboardState();
+      }, 120);
+    };
+    viewport?.addEventListener('resize', updateKeyboardState);
+    window.addEventListener('resize', updateKeyboardState);
+    document.addEventListener('focusin', onFocusIn);
+    document.addEventListener('focusout', onFocusOut);
+    return () => {
+      window.clearTimeout(blurTimer);
+      viewport?.removeEventListener('resize', updateKeyboardState);
+      window.removeEventListener('resize', updateKeyboardState);
+      document.removeEventListener('focusin', onFocusIn);
+      document.removeEventListener('focusout', onFocusOut);
+    };
+  }, [isAndroidApp]);
 
   useEffect(() => { if (initialCode) setCode(initialCode); }, [initialCode]);
   useEffect(() => { setCopied(false); setCopiedCode(false); }, [inviteRoom?.code]);
@@ -271,7 +317,8 @@ function LandingPage({ onJoin, error, onTeacher, initialCode, theme, onToggleThe
     }
   };
 
-  return <div className={`meet-landing-shell theme-${theme}${isAndroidApp ? ' android-app-landing' : ''}`}>
+  return <div className={`meet-landing-shell theme-${theme}${isAndroidApp ? ' android-app-landing' : ''}${keyboardOpen ? ' android-app-keyboard-open' : ''}`}>
+    {keyboardOpen && <div className="android-keyboard-scrim" aria-hidden="true" />}
     <header className="topbar meet-topbar">
       <a className="brand meet-brand" href="#top" aria-label="Judo home"><span className="brand-mark brand-mark-logo"><img src="/judo-logo.svg" alt="" /></span><span>Judo</span></a>
       <div className="meet-top-right"><span className="meet-top-caption"><span className="online-dot" /> Simple video meetings</span><button className="theme-toggle" onClick={onToggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>{theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}<span>{theme === 'light' ? 'Dark mode' : 'Light mode'}</span></button><button className="button button-quiet meet-teacher-button" onClick={onTeacher}>{teacherUser ? 'Host dashboard' : 'Host sign in'} <ChevronRight size={16} /></button></div>

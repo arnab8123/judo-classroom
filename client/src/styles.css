@@ -303,6 +303,9 @@
 .android-app-landing .meet-hero{display:block;max-width:680px;margin-inline:auto}
 .android-app-landing .meet-hero-copy{display:none}
 .android-app-landing .meet-join-column{max-width:620px;margin-inline:auto}
+.android-app-keyboard-open .android-keyboard-scrim{position:fixed;inset:0;z-index:80;background:rgba(19,20,22,.28);backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);pointer-events:none}
+.android-app-keyboard-open .meet-join-column{position:fixed;display:block;z-index:81;top:12px;left:50%;transform:translateX(-50%);width:min(620px,calc(100% - 24px));max-width:none;max-height:calc(100dvh - 24px);margin:0;overflow:auto;overscroll-behavior:contain}
+.android-app-keyboard-open .meet-join-card{max-height:calc(100dvh - 24px);overflow:auto;margin:0}
 @media(max-width:850px){
   .meet-main{min-height:0;padding:44px 22px}
   .meet-hero{grid-template-columns:1fr;gap:32px}
