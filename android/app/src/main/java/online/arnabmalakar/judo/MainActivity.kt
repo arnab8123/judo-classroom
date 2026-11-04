@@ -252,7 +252,7 @@ class MainActivity : ComponentActivity() {
         @Suppress("DEPRECATION")
         val archive: PackageInfo = packageManager.getPackageArchiveInfo(apk.absolutePath, 0) ?: error("Invalid APK")
         val archiveVersion = if (Build.VERSION.SDK_INT >= 28) archive.longVersionCode else archive.versionCode.toLong()
-        require(archive.packageName == packageName && archiveVersion == update.versionCode) { "APK version does not match update information" }
+        require(archive.packageName == packageName && archiveVersion == update.versionCode.toLong()) { "APK version does not match update information" }
         apk
     }.getOrNull()
 
