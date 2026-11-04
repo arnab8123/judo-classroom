@@ -1,6 +1,6 @@
 {
-  "versionCode": 4,
-  "versionName": "1.0.3",
+  "versionCode": 5,
+  "versionName": "1.0.4",
   "apkUrl": "https://judomeet.online/downloads/android/latest.apk",
-  "releaseNotes": "Fixes top safe spacing and adds class and app update notifications to the notification panel."
+  "releaseNotes": "Sets the top spacing to 10 dp while keeping status bar and camera cutout safe areas."
 }

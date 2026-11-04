@@ -156,7 +156,7 @@ class MainActivity : ComponentActivity() {
             val safeInsets = windowInsets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
-            val extraTopGap = (95 * resources.displayMetrics.density).roundToInt()
+            val extraTopGap = (10 * resources.displayMetrics.density).roundToInt()
             val params = webView.layoutParams as FrameLayout.LayoutParams
             params.setMargins(safeInsets.left, safeInsets.top + extraTopGap, safeInsets.right, safeInsets.bottom)
             webView.layoutParams = params
