@@ -814,16 +814,21 @@ io.on('connection', (socket) => {
   socket.emit('chat:history', db.prepare('SELECT id, sender_name AS senderName, body, created_at AS createdAt FROM chat_messages WHERE classroom_code=? ORDER BY created_at DESC LIMIT 100').all(code).reverse());
   socket.to(code).emit('participant:joined', { sessionId: session.sessionId, displayName: session.displayName, role: session.role, socketId: socket.id });
 
-  socket.on('chat:send', (data) => {
-    if (!allowSocketEvent(socket, 'chat:send', 12, 10_000)) return;
+  socket.on('chat:send', (data, acknowledge) => {
+    const ack = typeof acknowledge === 'function' ? acknowledge : () => {};
+    if (!allowSocketEvent(socket, 'chat:send', 12, 10_000)) {
+      ack({ ok: false, error: 'You are sending messages too quickly. Please wait a moment and try again.' });
+      return;
+    }
     const body = String(data?.body || '').trim().slice(0, 2000);
-    if (!body) return;
+    if (!body) { ack({ ok: false, error: 'Message cannot be empty.' }); return; }
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     db.prepare('INSERT INTO chat_messages (id, classroom_code, sender_key, sender_name, body) VALUES (?, ?, ?, ?, ?)')
       .run(id, code, session.ownerKey, session.displayName, body);
     db.prepare('DELETE FROM chat_messages WHERE classroom_code=? AND id NOT IN (SELECT id FROM chat_messages WHERE classroom_code=? ORDER BY created_at DESC, rowid DESC LIMIT 3000)').run(code, code);
     io.to(code).emit('chat:new', { id, senderName: session.displayName, senderId: session.sessionId, body, createdAt });
+    ack({ ok: true });
   });
 
   socket.on('board:sync', () => {
@@ -888,15 +893,23 @@ io.on('connection', (socket) => {
       socket.emit('server:warning', { message: 'Could not apply that participant action. Try again.' });
     }
   });
-  socket.on('board:draw', (payload) => {
-    if (!allowSocketEvent(socket, 'board:draw', 18, 5000)) return;
-    if (!payload || typeof payload !== 'object' || !Array.isArray(payload.points) || payload.points.length > 3000) return;
+  socket.on('board:draw', (payload, acknowledge) => {
+    const ack = typeof acknowledge === 'function' ? acknowledge : () => {};
+    if (!allowSocketEvent(socket, 'board:draw', 18, 5000)) {
+      ack({ ok: false, error: 'You are drawing too quickly. Wait a moment and try again.' });
+      return;
+    }
+    if (!payload || typeof payload !== 'object' || !Array.isArray(payload.points) || payload.points.length > 3000) {
+      ack({ ok: false, error: 'That whiteboard item could not be saved.' });
+      return;
+    }
     const type = payload.type === 'text' ? 'text' : 'draw';
     const text = type === 'text' ? String(payload.text || '').trim().slice(0, 500) : '';
-    if (type === 'text' && (!text || payload.points.length !== 1)) return;
+    if (type === 'text' && (!text || payload.points.length !== 1)) { ack({ ok: false, error: 'Whiteboard text cannot be empty.' }); return; }
     const id = String(payload.id || crypto.randomUUID()).slice(0, 100);
     if (db.prepare('SELECT 1 FROM board_events WHERE classroom_code=? AND object_id=? LIMIT 1').get(code, id)) {
       socket.emit('server:warning', { message: 'That whiteboard stroke ID is already in use. Draw the stroke again.' });
+      ack({ ok: false, error: 'That whiteboard item was already submitted. Please try again.' });
       return;
     }
     const color = /^#[0-9a-fA-F]{6}$/.test(String(payload.color)) ? payload.color : '#2563eb';
@@ -908,24 +921,30 @@ io.on('connection', (socket) => {
       .run(crypto.randomUUID(), code, id, session.ownerKey, JSON.stringify(stroke));
     db.prepare('DELETE FROM board_events WHERE classroom_code=? AND id NOT IN (SELECT id FROM board_events WHERE classroom_code=? ORDER BY created_at DESC, rowid DESC LIMIT 1200)').run(code, code);
     socket.to(code).emit('board:draw', stroke);
+    ack({ ok: true, stroke });
   });
-  socket.on('board:undo', (data) => {
-    if (!allowSocketEvent(socket, 'board:undo', 8, 5000)) return;
+  socket.on('board:undo', (data, acknowledge) => {
+    const ack = typeof acknowledge === 'function' ? acknowledge : () => {};
+    if (!allowSocketEvent(socket, 'board:undo', 8, 5000)) { ack({ ok: false, error: 'Undo is happening too quickly. Wait a moment and try again.' }); return; }
     const id = String(data?.id || '').slice(0, 100);
-    if (!id) return;
+    if (!id) { ack({ ok: false, error: 'That whiteboard item could not be undone.' }); return; }
     const stroke = db.prepare('SELECT owner_key FROM board_events WHERE classroom_code=? AND object_id=? ORDER BY created_at DESC LIMIT 1').get(code, id);
     if (!stroke || (session.role !== 'teacher' && stroke.owner_key !== session.ownerKey)) {
       socket.emit('server:warning', { message: 'You can only undo your own whiteboard strokes.' });
+      ack({ ok: false, error: 'You can only undo your own whiteboard items.' });
       return;
     }
     db.prepare('DELETE FROM board_events WHERE classroom_code=? AND object_id=?').run(code, id);
     io.to(code).emit('board:undo', { id });
+    ack({ ok: true });
   });
-  socket.on('board:clear', () => {
-    if (session.role !== 'teacher') { socket.emit('server:warning', { message: 'Only the teacher can clear the shared whiteboard.' }); return; }
-    if (!allowSocketEvent(socket, 'board:clear', 2, 10_000)) return;
+  socket.on('board:clear', (acknowledge) => {
+    const ack = typeof acknowledge === 'function' ? acknowledge : () => {};
+    if (session.role !== 'teacher') { socket.emit('server:warning', { message: 'Only the teacher can clear the shared whiteboard.' }); ack({ ok: false, error: 'Only the teacher can clear the shared whiteboard.' }); return; }
+    if (!allowSocketEvent(socket, 'board:clear', 2, 10_000)) { ack({ ok: false, error: 'Please wait before clearing the board again.' }); return; }
     db.prepare('DELETE FROM board_events WHERE classroom_code=?').run(code);
     io.to(code).emit('board:cleared', { by: session.displayName });
+    ack({ ok: true });
   });
   socket.on('participant:hand', (data) => {
     if (!allowSocketEvent(socket, 'participant:hand', 8, 5000)) return;
