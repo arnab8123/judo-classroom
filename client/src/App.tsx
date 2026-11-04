@@ -218,9 +218,11 @@ function LandingPage({ onJoin, error, onTeacher, initialCode, theme, onToggleThe
     const viewport = window.visualViewport;
     let baselineHeight = viewport?.height ?? window.innerHeight;
     let joinInputFocused = false;
+    let nativeKeyboardSignalSeen = false;
     let blurTimer = 0;
     const currentHeight = () => viewport?.height ?? window.innerHeight;
     const updateKeyboardState = () => {
+      if (nativeKeyboardSignalSeen) return;
       const height = currentHeight();
       if (!joinInputFocused) {
         baselineHeight = height;
@@ -228,6 +230,10 @@ function LandingPage({ onJoin, error, onTeacher, initialCode, theme, onToggleThe
         return;
       }
       setKeyboardOpen(height < baselineHeight - 100);
+    };
+    const onNativeKeyboard = (event: Event) => {
+      nativeKeyboardSignalSeen = true;
+      setKeyboardOpen(Boolean((event as CustomEvent<{ visible?: boolean }>).detail?.visible));
     };
     const onFocusIn = (event: FocusEvent) => {
       if (!(event.target instanceof HTMLInputElement) || !event.target.closest('.meet-join-card')) return;
@@ -247,12 +253,14 @@ function LandingPage({ onJoin, error, onTeacher, initialCode, theme, onToggleThe
     };
     viewport?.addEventListener('resize', updateKeyboardState);
     window.addEventListener('resize', updateKeyboardState);
+    window.addEventListener('judo-keyboard', onNativeKeyboard);
     document.addEventListener('focusin', onFocusIn);
     document.addEventListener('focusout', onFocusOut);
     return () => {
       window.clearTimeout(blurTimer);
       viewport?.removeEventListener('resize', updateKeyboardState);
       window.removeEventListener('resize', updateKeyboardState);
+      window.removeEventListener('judo-keyboard', onNativeKeyboard);
       document.removeEventListener('focusin', onFocusIn);
       document.removeEventListener('focusout', onFocusOut);
     };

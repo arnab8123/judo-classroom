@@ -59,6 +59,7 @@ import kotlin.math.roundToInt
 class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
     private lateinit var appContainer: FrameLayout
+    private var lastKeyboardVisibility: Boolean? = null
     private var shareRoom: Room? = null
     private var classroomSocket: Socket? = null
     private var pendingCapture: Intent? = null
@@ -156,6 +157,14 @@ class MainActivity : ComponentActivity() {
             val safeInsets = windowInsets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
+            val keyboardVisible = windowInsets.isVisible(WindowInsetsCompat.Type.ime())
+            if (lastKeyboardVisibility != keyboardVisible) {
+                lastKeyboardVisibility = keyboardVisible
+                webView.evaluateJavascript(
+                    "window.dispatchEvent(new CustomEvent('judo-keyboard',{detail:{visible:$keyboardVisible}}));",
+                    null
+                )
+            }
             val extraTopGap = (10 * resources.displayMetrics.density).roundToInt()
             val params = webView.layoutParams as FrameLayout.LayoutParams
             params.setMargins(safeInsets.left, safeInsets.top + extraTopGap, safeInsets.right, safeInsets.bottom)

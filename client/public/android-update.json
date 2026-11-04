@@ -1,6 +1,6 @@
 {
-  "versionCode": 7,
-  "versionName": "1.0.6",
+  "versionCode": 8,
+  "versionName": "1.0.7",
   "apkUrl": "https://judomeet.online/downloads/android/latest.apk",
-  "releaseNotes": "Lifts the join form above the Android keyboard while typing."
+  "releaseNotes": "Reliably moves the join form above the Android keyboard while typing."
 }
