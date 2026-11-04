@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
     private var pendingWebPermission: PermissionRequest? = null
     private var pendingFileChooser: ValueCallback<Array<Uri>>? = null
     private var isPublishingScreen = false
+    private var nativeMicEnabled = false
 
     private val screenCaptureLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val data = result.data
@@ -131,6 +132,7 @@ class MainActivity : ComponentActivity() {
         when (uri.host) {
             "share" -> beginNativeShare(uri)
             "stop-share" -> stopNativeShare()
+            "microphone" -> setNativeMicrophoneEnabled(uri.getQueryParameter("enabled")?.toBooleanStrictOrNull() ?: false)
         }
     }
 
@@ -138,6 +140,7 @@ class MainActivity : ComponentActivity() {
         val server = uri.getQueryParameter("server")?.trimEnd('/')
         val code = uri.getQueryParameter("room")?.trim()
         val name = uri.getQueryParameter("name")?.trim()
+        val micEnabled = uri.getQueryParameter("micEnabled")?.toBooleanStrictOrNull() ?: false
         if (server != HOME_URL.trimEnd('/') || code.isNullOrBlank() || name.isNullOrBlank()) {
             notifyWebShare(active = false, error = "Could not start phone sharing. Reopen the meeting in Judo and try again.")
             return
@@ -147,14 +150,34 @@ class MainActivity : ComponentActivity() {
             return
         }
         val manager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
-        pendingCapture = Intent().putExtra("server", server).putExtra("room", code).putExtra("name", name)
+        pendingCapture = Intent().putExtra("server", server).putExtra("room", code).putExtra("name", name).putExtra("micEnabled", micEnabled)
         screenCaptureLauncher.launch(manager.createScreenCaptureIntent())
+    }
+
+    private fun setNativeMicrophoneEnabled(enabled: Boolean) {
+        if (!isPublishingScreen) return
+        lifecycleScope.launch {
+            try {
+                val nativeRoom = shareRoom ?: throw IllegalStateException("Phone sharing is no longer active.")
+                if (enabled && !hasPermission(Manifest.permission.RECORD_AUDIO)) {
+                    throw SecurityException("Allow microphone access for Judo in Android settings, then try again.")
+                }
+                if (!nativeRoom.localParticipant.setMicrophoneEnabled(enabled)) {
+                    throw IllegalStateException("Android could not change the microphone. Please try again.")
+                }
+                nativeMicEnabled = enabled
+                notifyWebShare(active = true, micEnabled = nativeMicEnabled)
+            } catch (error: Exception) {
+                notifyWebShare(active = true, micEnabled = nativeMicEnabled, error = error.message ?: "Could not change the phone microphone.")
+            }
+        }
     }
 
     private fun connectAndPublish(request: Intent, permissionData: Intent) {
         val server = request.getStringExtra("server") ?: HOME_URL
         val code = request.getStringExtra("room") ?: ""
         val name = request.getStringExtra("name") ?: "Judo user"
+        val micEnabled = request.getBooleanExtra("micEnabled", false)
         lifecycleScope.launch {
             try {
                 val tokenResponse = withContext(Dispatchers.IO) { requestRoomToken(server, code, "$name (Android)") }
@@ -163,6 +186,11 @@ class MainActivity : ComponentActivity() {
                 shareRoom?.disconnect()
                 shareRoom = nativeRoom
                 connectClassroomSocket(server, tokenResponse.getString("sessionToken"))
+                if (micEnabled) {
+                    if (!hasPermission(Manifest.permission.RECORD_AUDIO)) throw SecurityException("Allow microphone access for Judo in Android settings, then try again.")
+                    if (!nativeRoom.localParticipant.setMicrophoneEnabled(true)) throw IllegalStateException("Android could not start the microphone. Please try again.")
+                }
+                nativeMicEnabled = micEnabled
                 val started = nativeRoom.localParticipant.setScreenShareEnabled(true, ScreenCaptureParams(permissionData, onStop = {
                     runOnUiThread { finishNativeShare("Phone screen sharing stopped.") }
                 }))
@@ -175,6 +203,7 @@ class MainActivity : ComponentActivity() {
                 classroomSocket?.disconnect()
                 classroomSocket = null
                 isPublishingScreen = false
+                nativeMicEnabled = false
                 notifyWebShare(active = false, error = error.message ?: "Could not publish your phone screen to this meeting.")
             }
         }
@@ -238,19 +267,22 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun finishNativeShare(message: String) {
+        val hadActiveShare = isPublishingScreen
         isPublishingScreen = false
         shareRoom?.disconnect()
         shareRoom = null
         classroomSocket?.disconnect()
         classroomSocket = null
-        notifyWebShare(active = false, message = message)
+        notifyWebShare(active = false, message = message, micEnabled = if (hadActiveShare) nativeMicEnabled else null)
+        nativeMicEnabled = false
     }
 
-    private fun notifyWebShare(active: Boolean, error: String? = null, message: String? = null) {
+    private fun notifyWebShare(active: Boolean, error: String? = null, message: String? = null, micEnabled: Boolean? = null) {
         if (!::webView.isInitialized) return
         val detail = JSONObject().put("active", active).apply {
             if (error != null) put("error", error)
             if (message != null) put("message", message)
+            if (micEnabled != null) put("micEnabled", micEnabled)
         }
         val script = "window.dispatchEvent(new CustomEvent('judo-native-screen-share',{detail:${detail}}));"
         runOnUiThread { webView.evaluateJavascript(script, null) }

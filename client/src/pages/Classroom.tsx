@@ -41,6 +41,7 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   const [shareAudio, setShareAudio] = useState(false);
   const [screenShares, setScreenShares] = useState<{ id: string; label: string; videoTrack: MediaStreamTrack; audioTrack?: MediaStreamTrack }[]>([]);
   const [androidScreenSharing, setAndroidScreenSharing] = useState(false);
+  const [androidMicOn, setAndroidMicOn] = useState(false);
   const [reaction, setReaction] = useState<{ displayName: string; emoji: string; id: string } | null>(null);
   const [announcement, setAnnouncement] = useState('');
   const [showAnnouncement, setShowAnnouncement] = useState(false);
@@ -52,19 +53,40 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   const shareRef = useRef(screenShares);
   const stoppingSharesRef = useRef(new Set<string>());
   const recorderRef = useRef<MediaRecorder | null>(null);
+  const roomRef = useRef<Room | null>(room);
+  const pendingAndroidMicRestoreRef = useRef<boolean | null>(null);
   const recordingStreamRef = useRef<MediaStream | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const startedAt = useRef(Date.now());
   shareRef.current = screenShares;
+  roomRef.current = room;
 
   const bump = useCallback(() => setRefreshKey((v) => v + 1), []);
 
   useEffect(() => {
     const onNativeShare = (event: Event) => {
-      const detail = (event as CustomEvent<{ active: boolean; error?: string; message?: string }>).detail;
+      const detail = (event as CustomEvent<{ active: boolean; micEnabled?: boolean; error?: string; message?: string }>).detail;
       setAndroidScreenSharing(Boolean(detail?.active));
+      if (detail?.active) {
+        setAndroidMicOn(Boolean(detail.micEnabled));
+        const currentRoom = roomRef.current;
+        if (currentRoom?.localParticipant.isMicrophoneEnabled) {
+          currentRoom.localParticipant.setMicrophoneEnabled(false).then(bump).catch((error) => {
+            setMediaError(error instanceof Error ? `Could not switch microphone to phone sharing: ${error.message}` : 'Could not switch microphone to phone sharing.');
+          });
+        }
+      } else {
+        setAndroidMicOn(false);
+        const restoreMic = typeof detail?.micEnabled === 'boolean' ? detail.micEnabled : pendingAndroidMicRestoreRef.current;
+        pendingAndroidMicRestoreRef.current = null;
+        if (typeof restoreMic === 'boolean' && roomRef.current) {
+          roomRef.current.localParticipant.setMicrophoneEnabled(restoreMic).then(bump).catch((error) => {
+            setMediaError(error instanceof Error ? error.message : 'Could not restore your microphone setting.');
+          });
+        }
+      }
       if (detail?.error) setMediaError(detail.error);
-      if (detail?.active) setMediaError('');
+      if (detail?.active && !detail.error) setMediaError('');
       if (detail?.message) setAnnouncement(detail.message);
       bump();
     };
@@ -190,6 +212,12 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   }, [participants, refreshKey]);
 
   const toggleMic = async () => {
+    if (navigator.userAgent.includes('JudoAndroidApp') && androidScreenSharing) {
+      const intent = new URL('judo://microphone');
+      intent.searchParams.set('enabled', String(!androidMicOn));
+      window.location.assign(intent.toString());
+      return;
+    }
     if (!room) return;
     try { await room.localParticipant.setMicrophoneEnabled(!room.localParticipant.isMicrophoneEnabled); bump(); }
     catch (err) { setMediaError(err instanceof Error ? err.message : 'Could not change microphone setting.'); }
@@ -207,6 +235,15 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
       intent.searchParams.set('room', session.room.code);
       intent.searchParams.set('name', session.displayName);
       intent.searchParams.set('server', window.location.origin);
+      const micEnabled = room.localParticipant.isMicrophoneEnabled;
+      intent.searchParams.set('micEnabled', String(micEnabled));
+      pendingAndroidMicRestoreRef.current = micEnabled;
+      try { if (micEnabled) await room.localParticipant.setMicrophoneEnabled(false); }
+      catch (err) {
+        pendingAndroidMicRestoreRef.current = null;
+        setMediaError(err instanceof Error ? `Could not prepare the microphone for phone sharing: ${err.message}` : 'Could not prepare the microphone for phone sharing.');
+        return;
+      }
       window.location.assign(intent.toString());
       return;
     }
@@ -301,7 +338,7 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   const leave = () => { if (androidScreenSharing) stopAndroidScreenShare(); if (room) room.disconnect(); onLeave(); };
 
   const localCameraOn = room?.localParticipant.isCameraEnabled ?? mediaChoice.cameraEnabled;
-  const localMicOn = room?.localParticipant.isMicrophoneEnabled ?? mediaChoice.micEnabled;
+  const localMicOn = androidScreenSharing ? androidMicOn : (room?.localParticipant.isMicrophoneEnabled ?? mediaChoice.micEnabled);
   const currentPanel = (next: typeof panel) => setPanel((old) => old === next ? null : next);
   const clockText = `${String(Math.floor(elapsed / 3600)).padStart(2, '0')}:${String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0')}:${String(elapsed % 60).padStart(2, '0')}`;
 
