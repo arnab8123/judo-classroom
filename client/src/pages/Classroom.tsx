@@ -3,9 +3,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { LocalVideoTrack, Participant, Room, RoomEvent, Track, TrackPublication } from 'livekit-client';
 import {
-  ArrowLeft, ArrowUpRight, Bell, BookOpen, Check, ChevronDown, Circle, CircleHelp, Copy, FileText, Hand, Headphones,
+  ArrowLeft, ArrowUpRight, Bell, Bluetooth, BookOpen, Check, ChevronDown, Circle, CircleHelp, Copy, FileText, Hand, Headphones,
   MessageCircle, Mic, MicOff, MonitorUp, MoreHorizontal, Maximize2, PanelRightClose, Paperclip, PhoneOff, Pin, Send,
-  Settings2, ShieldCheck, Smile, Sparkles, Square, Sun, Moon, Users, Video, VideoOff, Volume2, X, Wifi, XCircle
+  Settings2, ShieldCheck, Smile, Sparkles, Square, Sun, Moon, Users, Video, VideoOff, Volume2, VolumeX, X, Wifi, XCircle
 } from 'lucide-react';
 import {
   API_BASE, ChatMessage, ClassroomFile, PersonalNote, RoomSession, downloadFile, endRoom, getFiles,
@@ -16,6 +16,7 @@ import Whiteboard from '../components/Whiteboard';
 declare global {
   interface Window {
     dispatchEvent(event: Event): boolean;
+    JudoNative?: { setMeetingActive(active: boolean): void; setAudioOutput(output: string): void; resetAudioOutput(): void };
   }
 }
 
@@ -49,12 +50,22 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   const [isRecording, setIsRecording] = useState(false);
   const [showShareMenu, setShowShareMenu] = useState(false);
   const [showMore, setShowMore] = useState(false);
+  const [showAudioOutputs, setShowAudioOutputs] = useState(false);
+  const [inputDeviceMenu, setInputDeviceMenu] = useState<'microphone' | 'camera' | null>(null);
+  const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const [selectedMicId, setSelectedMicId] = useState(mediaChoice.micId);
+  const [selectedCameraId, setSelectedCameraId] = useState(mediaChoice.cameraId);
+  const [audioOutput, setAudioOutput] = useState<'speaker' | 'earpiece' | 'bluetooth'>('speaker');
+  const [audioMuted, setAudioMuted] = useState(false);
   const [pinnedScreenId, setPinnedScreenId] = useState('');
   const shareRef = useRef(screenShares);
   const stoppingSharesRef = useRef(new Set<string>());
   const recorderRef = useRef<MediaRecorder | null>(null);
   const roomRef = useRef<Room | null>(room);
   const pendingAndroidMicRestoreRef = useRef<boolean | null>(null);
+  const preferredMicIdRef = useRef(mediaChoice.micId);
+  const preferredCameraIdRef = useRef(mediaChoice.cameraId);
   const recordingStreamRef = useRef<MediaStream | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const startedAt = useRef(Date.now());
@@ -62,6 +73,25 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   roomRef.current = room;
 
   const bump = useCallback(() => setRefreshKey((v) => v + 1), []);
+
+  useEffect(() => {
+    window.JudoNative?.setMeetingActive(true);
+    window.JudoNative?.setAudioOutput('speaker');
+    return () => {
+      window.JudoNative?.setMeetingActive(false);
+      window.JudoNative?.resetAudioOutput();
+    };
+  }, []);
+
+  useEffect(() => {
+    const onAudioOutput = (event: Event) => {
+      const detail = (event as CustomEvent<{ output: 'speaker' | 'earpiece' | 'bluetooth'; error?: string }>).detail;
+      if (detail?.error) setMediaError(detail.error);
+      else if (detail?.output) { setAudioOutput(detail.output); setMediaError(''); }
+    };
+    window.addEventListener('judo-audio-output', onAudioOutput);
+    return () => window.removeEventListener('judo-audio-output', onAudioOutput);
+  }, []);
 
   useEffect(() => {
     const onNativeShare = (event: Event) => {
@@ -138,12 +168,12 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
       if (!active) return;
       const publishErrors: string[] = [];
       try {
-        await liveRoom.localParticipant.setMicrophoneEnabled(mediaChoice.micEnabled, mediaChoice.micId ? { deviceId: mediaChoice.micId } : undefined);
+        await liveRoom.localParticipant.setMicrophoneEnabled(mediaChoice.micEnabled, preferredMicIdRef.current ? { deviceId: preferredMicIdRef.current } : undefined);
       } catch (err) {
         publishErrors.push(`microphone: ${err instanceof Error ? err.message : String(err)}`);
       }
       try {
-        await liveRoom.localParticipant.setCameraEnabled(mediaChoice.cameraEnabled, mediaChoice.cameraId ? { deviceId: mediaChoice.cameraId } : undefined);
+        await liveRoom.localParticipant.setCameraEnabled(mediaChoice.cameraEnabled, preferredCameraIdRef.current ? { deviceId: preferredCameraIdRef.current } : undefined);
       } catch (err) {
         publishErrors.push(`camera: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -191,6 +221,36 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   const refreshFiles = async () => {
     try { setFiles((await getFiles(session.room.code, session.sessionToken)).files); }
     catch (err) { setMediaError(err instanceof Error ? err.message : 'Could not load classroom files.'); }
+  };
+
+  const refreshInputDevices = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) return;
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setMicrophones(devices.filter((device) => device.kind === 'audioinput'));
+      setCameras(devices.filter((device) => device.kind === 'videoinput'));
+    } catch { /* Keep the current device lists if enumeration is temporarily unavailable. */ }
+  }, []);
+
+  useEffect(() => {
+    void refreshInputDevices();
+    navigator.mediaDevices?.addEventListener?.('devicechange', refreshInputDevices);
+    return () => navigator.mediaDevices?.removeEventListener?.('devicechange', refreshInputDevices);
+  }, [refreshInputDevices]);
+
+  const selectInputDevice = async (kind: 'audioinput' | 'videoinput', deviceId: string) => {
+    try {
+      if (room && !(await room.switchActiveDevice(kind, deviceId, Boolean(deviceId)))) {
+        throw new Error(`Could not switch the ${kind === 'audioinput' ? 'microphone' : 'camera'}.`);
+      }
+      if (kind === 'audioinput') { preferredMicIdRef.current = deviceId; setSelectedMicId(deviceId); }
+      else { preferredCameraIdRef.current = deviceId; setSelectedCameraId(deviceId); }
+      setMediaError('');
+      setInputDeviceMenu(null);
+      void refreshInputDevices();
+    } catch (error) {
+      setMediaError(error instanceof Error ? error.message : 'Could not switch input device.');
+    }
   };
 
   const participants: Participant[] = useMemo(() => room ? [room.localParticipant, ...room.remoteParticipants.values()] : [], [room, refreshKey]);
@@ -398,16 +458,17 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
         {panel === 'notes' && <NotesPanel session={session} />}
       </aside>}
     </main>
-    <div className="audio-track-bin" aria-hidden="true">{participants.flatMap((participant) => [...participant.trackPublications.values()].filter((publication) => publication.kind === Track.Kind.Audio).map((publication) => <AudioTrack key={`${participant.identity}-${publication.trackSid}`} participant={participant} publication={publication} isLocal={participant === room?.localParticipant} />))}</div>
+    <div className="audio-track-bin" aria-hidden="true">{participants.flatMap((participant) => [...participant.trackPublications.values()].filter((publication) => publication.kind === Track.Kind.Audio).map((publication) => <AudioTrack key={`${participant.identity}-${publication.trackSid}`} participant={participant} publication={publication} isLocal={participant === room?.localParticipant} muted={audioMuted} />))}</div>
     <footer className="meeting-controls">
       <div className="meeting-control-left"><span className="class-code-pill">{session.room.code}</span><span className="role-tag">{session.role === 'teacher' ? 'Host' : 'Student'}</span></div>
       <div className="meeting-control-center">
-        <button className={`meeting-control ${localMicOn ? '' : 'meeting-control-off'}`} onClick={toggleMic} title={localMicOn ? 'Mute microphone' : 'Unmute microphone'} aria-label={localMicOn ? 'Mute microphone' : 'Unmute microphone'}>{localMicOn ? <Mic size={20} /> : <MicOff size={20} />}<span>{localMicOn ? 'Mute' : 'Unmute'}</span></button>
-        <button className={`meeting-control ${localCameraOn ? '' : 'meeting-control-off'}`} onClick={toggleCamera} title={localCameraOn ? 'Turn camera off' : 'Turn camera on'} aria-label={localCameraOn ? 'Turn camera off' : 'Turn camera on'}>{localCameraOn ? <Video size={20} /> : <VideoOff size={20} />}<span>{localCameraOn ? 'Camera' : 'Camera off'}</span></button>
+        <div className="meeting-device-control"><button className={`meeting-control ${localMicOn ? '' : 'meeting-control-off'}`} onClick={toggleMic} title={localMicOn ? 'Mute microphone' : 'Unmute microphone'} aria-label={localMicOn ? 'Mute microphone' : 'Unmute microphone'}>{localMicOn ? <Mic size={20} /> : <MicOff size={20} />}<span>{localMicOn ? 'Mute' : 'Unmute'}</span></button><button className="device-picker-trigger" onClick={() => { setInputDeviceMenu((current) => current === 'microphone' ? null : 'microphone'); void refreshInputDevices(); }} aria-label="Choose microphone" title="Choose microphone"><ChevronDown size={13} /></button>{inputDeviceMenu === 'microphone' && <div className="input-device-popover"><label htmlFor="meeting-microphone">Microphone</label><select id="meeting-microphone" value={selectedMicId} onChange={(event) => void selectInputDevice('audioinput', event.target.value)}><option value="">System default</option>{microphones.map((device, index) => <option key={device.deviceId || `mic-${index}`} value={device.deviceId}>{device.label || `Microphone ${index + 1}`}</option>)}</select></div>}</div>
+        <div className="meeting-device-control"><button className={`meeting-control ${localCameraOn ? '' : 'meeting-control-off'}`} onClick={toggleCamera} title={localCameraOn ? 'Turn camera off' : 'Turn camera on'} aria-label={localCameraOn ? 'Turn camera off' : 'Turn camera on'}>{localCameraOn ? <Video size={20} /> : <VideoOff size={20} />}<span>{localCameraOn ? 'Camera' : 'Camera off'}</span></button><button className="device-picker-trigger" onClick={() => { setInputDeviceMenu((current) => current === 'camera' ? null : 'camera'); void refreshInputDevices(); }} aria-label="Choose camera" title="Choose camera"><ChevronDown size={13} /></button>{inputDeviceMenu === 'camera' && <div className="input-device-popover"><label htmlFor="meeting-camera">Camera</label><select id="meeting-camera" value={selectedCameraId} onChange={(event) => void selectInputDevice('videoinput', event.target.value)}><option value="">System default</option>{cameras.map((device, index) => <option key={device.deviceId || `camera-${index}`} value={device.deviceId}>{device.label || `Camera ${index + 1}`}</option>)}</select></div>}</div>
         <div className="share-control-wrap"><button className={`meeting-control meeting-share ${screenShares.length || androidScreenSharing ? 'meeting-control-share-active' : ''}`} onClick={() => setShowShareMenu((v) => !v)} title="Share your screen"><MonitorUp size={20} /><span>Share screen</span><ChevronDown size={13} /></button>{showShareMenu && <div className="share-popover">{!navigator.userAgent.includes('JudoAndroidApp') && <label className="checkbox-row"><input type="checkbox" checked={shareAudio} onChange={(e) => setShareAudio(e.target.checked)} /><span><strong>Also share tab/system audio</strong><small>Available sources depend on your browser.</small></span></label>}{androidScreenSharing && <div className="share-active-row"><span><MonitorUp size={15} /> Phone screen is being shared</span><button className="button button-outline button-small" onClick={stopAndroidScreenShare}>Cancel share</button></div>}{screenShares.map((share) => <div className="share-active-row" key={share.id}><span><MonitorUp size={15} /> {share.label} is being shared</span><button className="button button-outline button-small" onClick={() => stopScreenShare(share.id)}>Cancel share</button></div>)}<button className="button button-primary button-wide" onClick={startScreenShare} disabled={androidScreenSharing && navigator.userAgent.includes('JudoAndroidApp')}><MonitorUp size={16} /> {navigator.userAgent.includes('JudoAndroidApp') ? (androidScreenSharing ? 'Phone screen shared' : 'Share phone screen') : (screenShares.length ? 'Share another screen' : 'Share a screen')}</button>{navigator.userAgent.includes('JudoAndroidApp') && !androidScreenSharing && <p className="share-hint">Android will ask you to approve screen capture.</p>}</div>}</div>
         <button className={`meeting-control ${raised ? 'meeting-control-hand-raised' : ''}`} onClick={toggleHand} title={raised ? 'Lower hand' : 'Raise hand'} aria-label={raised ? 'Lower hand' : 'Raise hand'}>{raised ? <Hand size={20} fill="currentColor" /> : <Hand size={20} />}<span>{raised ? 'Lower hand' : 'Raise hand'}</span></button>
         <button className="meeting-control" onClick={() => currentPanel('chat')} title="Open chat"><MessageCircle size={20} /><span>Chat</span>{chatMessages.length > 0 && <span className="control-badge">{chatMessages.length > 99 ? '99+' : chatMessages.length}</span>}</button>
-        <div className="more-control-wrap"><button className="meeting-control" onClick={() => setShowMore((v) => !v)} title="More controls"><MoreHorizontal size={21} /><span>More</span></button>{showMore && <div className="more-popover"><button onClick={() => { currentPanel('people'); setShowMore(false); }}><Users size={16} /> People</button><button onClick={() => { currentPanel('files'); setShowMore(false); }}><Paperclip size={16} /> Class materials</button><button onClick={() => { currentPanel('notes'); setShowMore(false); }}><FileText size={16} /> Private notes</button><button onClick={() => { changeStage('board'); setShowMore(false); }}><BookOpen size={16} /> Shared whiteboard</button><button onClick={isRecording ? stopRecording : startRecording} className={isRecording ? 'recording-menu-action' : ''}>{isRecording ? <Square size={16} fill="currentColor" /> : <Circle size={16} />} {isRecording ? 'Stop and save recording' : 'Record class to this device'}</button><div className="reaction-picker">{['👏', '👍', '❤️', '😂', '🎉', '🙌'].map((emoji) => <button key={emoji} aria-label={`React ${emoji}`} onClick={() => { sendReaction(emoji); setShowMore(false); }}>{emoji}</button>)}</div>{session.role === 'teacher' && <button onClick={() => { setShowAnnouncement(true); setShowMore(false); }}><Bell size={16} /> Make announcement</button>}</div>}</div>
+        {navigator.userAgent.includes('JudoAndroidApp') && <div className="more-control-wrap"><button className="meeting-control" onClick={() => setShowAudioOutputs((visible) => !visible)} title="Audio output"><Volume2 size={20} /><span>Audio</span></button>{showAudioOutputs && <div className="more-popover audio-output-popover"><strong>Audio output</strong><button className={audioOutput === 'speaker' ? 'audio-output-selected' : ''} onClick={() => window.JudoNative?.setAudioOutput('speaker')}><Volume2 size={16} /> Speaker {audioOutput === 'speaker' ? '✓' : ''}</button><button className={audioOutput === 'earpiece' ? 'audio-output-selected' : ''} onClick={() => window.JudoNative?.setAudioOutput('earpiece')}><Headphones size={16} /> Earpiece {audioOutput === 'earpiece' ? '✓' : ''}</button><button className={audioMuted ? 'audio-output-selected' : ''} onClick={() => setAudioMuted((muted) => !muted)}>{audioMuted ? <Volume2 size={16} /> : <VolumeX size={16} />} {audioMuted ? 'Turn sound on' : 'Turn off sound'} {audioMuted ? '✓' : ''}</button><button className={audioOutput === 'bluetooth' ? 'audio-output-selected' : ''} onClick={() => window.JudoNative?.setAudioOutput('bluetooth')}><Bluetooth size={16} /> Bluetooth {audioOutput === 'bluetooth' ? '✓' : ''}</button></div>}</div>}
+        <div className="more-control-wrap"><button className="meeting-control" onClick={() => setShowMore((v) => !v)} title="More controls"><MoreHorizontal size={21} /><span>More</span></button>{showMore && <div className="more-popover">{navigator.userAgent.includes('JudoAndroidApp') && <button onClick={() => { void toggleCamera(); setShowMore(false); }}>{localCameraOn ? <VideoOff size={16} /> : <Video size={16} />} {localCameraOn ? 'Turn camera off' : 'Turn camera on'}</button>}<button onClick={() => { currentPanel('people'); setShowMore(false); }}><Users size={16} /> People</button><button onClick={() => { currentPanel('files'); setShowMore(false); }}><Paperclip size={16} /> Class materials</button><button onClick={() => { currentPanel('notes'); setShowMore(false); }}><FileText size={16} /> Private notes</button><button onClick={() => { changeStage('board'); setShowMore(false); }}><BookOpen size={16} /> Shared whiteboard</button><button onClick={isRecording ? stopRecording : startRecording} className={isRecording ? 'recording-menu-action' : ''}>{isRecording ? <Square size={16} fill="currentColor" /> : <Circle size={16} />} {isRecording ? 'Stop and save recording' : 'Record class to this device'}</button><div className="reaction-picker">{['👏', '👍', '❤️', '😂', '🎉', '🙌'].map((emoji) => <button key={emoji} aria-label={`React ${emoji}`} onClick={() => { sendReaction(emoji); setShowMore(false); }}>{emoji}</button>)}</div>{session.role === 'teacher' && <button onClick={() => { setShowAnnouncement(true); setShowMore(false); }}><Bell size={16} /> Make announcement</button>}</div>}</div>
       </div>
       <div className="meeting-control-right"><button className="leave-button" onClick={leave} title="Leave classroom"><PhoneOff size={19} /><span>Leave</span></button>{session.role === 'teacher' && <button className="end-meeting-button" onClick={endMeeting} title="End classroom for everyone"><X size={17} /> End for all</button>}</div>
     </footer>
@@ -452,7 +513,7 @@ function VideoTile({ participant, publication, displayName, isLocal, cameraOn, s
 }
 
 
-function AudioTrack({ participant: _participant, publication, isLocal }: { participant: Participant; publication: TrackPublication; isLocal: boolean }) {
+function AudioTrack({ participant: _participant, publication, isLocal, muted = false }: { participant: Participant; publication: TrackPublication; isLocal: boolean; muted?: boolean }) {
   const audioRef = useRef<HTMLAudioElement>(null);
   const track = publication.track;
   useEffect(() => {
@@ -460,7 +521,7 @@ function AudioTrack({ participant: _participant, publication, isLocal }: { parti
     track.attach(audioRef.current);
     return () => { track.detach(audioRef.current!); };
   }, [track, isLocal]);
-  return <audio ref={audioRef} autoPlay playsInline />;
+  return <audio ref={audioRef} autoPlay playsInline muted={muted} />;
 }
 
 function ChatPanel({ messages, socket, participantId }: { messages: ChatMessage[]; socket: Socket | null; participantId: string }) {

@@ -5,9 +5,12 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioDeviceInfo
+import android.media.AudioManager
 import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
 import android.view.ViewGroup
 import android.webkit.PermissionRequest
 import android.webkit.ValueCallback
@@ -16,6 +19,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.JavascriptInterface
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,6 +37,7 @@ import io.socket.emitter.Emitter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -47,6 +52,8 @@ class MainActivity : ComponentActivity() {
     private var pendingFileChooser: ValueCallback<Array<Uri>>? = null
     private var isPublishingScreen = false
     private var nativeMicEnabled = false
+    private val keepAliveStarted = AtomicBoolean(false)
+    private var pendingAudioOutput: String? = null
 
     private val screenCaptureLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         val data = result.data
@@ -78,6 +85,13 @@ class MainActivity : ComponentActivity() {
         pendingFileChooser = null
     }
 
+    private val bluetoothPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        val output = pendingAudioOutput ?: return@registerForActivityResult
+        pendingAudioOutput = null
+        if (granted) applyAudioOutput(output)
+        else notifyAudioOutput(output, "Allow nearby device access to use a Bluetooth headset.")
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -101,6 +115,7 @@ class MainActivity : ComponentActivity() {
             settings.javaScriptCanOpenWindowsAutomatically = false
             settings.safeBrowsingEnabled = true
             settings.userAgentString = "${settings.userAgentString} JudoAndroidApp"
+            addJavascriptInterface(MeetingLifecycleBridge(), "JudoNative")
             webViewClient = JudoWebViewClient()
             webChromeClient = JudoWebChromeClient()
         }
@@ -289,6 +304,128 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun hasPermission(permission: String) = ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun applyAudioOutput(output: String) {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        try {
+            audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val targetType = when (output) {
+                    "speaker" -> AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
+                    "earpiece" -> AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+                    "bluetooth" -> null
+                    else -> return
+                }
+                val device = audioManager.availableCommunicationDevices.firstOrNull { available ->
+                    if (output == "bluetooth") available.type in setOf(
+                        AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+                        AudioDeviceInfo.TYPE_BLE_HEADSET,
+                        AudioDeviceInfo.TYPE_HEARING_AID
+                    ) else available.type == targetType
+                }
+                if (device == null) {
+                    notifyAudioOutput(output, if (output == "bluetooth") "No Bluetooth audio device is connected." else "That audio output is not available on this device.")
+                    return
+                }
+                if (!audioManager.setCommunicationDevice(device)) {
+                    notifyAudioOutput(output, "Android could not switch the audio output.")
+                    return
+                }
+            } else {
+                when (output) {
+                    "speaker" -> audioManager.isSpeakerphoneOn = true
+                    "earpiece" -> audioManager.isSpeakerphoneOn = false
+                    "bluetooth" -> {
+                        if (!audioManager.isBluetoothScoAvailableOffCall) {
+                            notifyAudioOutput(output, "Bluetooth audio is not available on this device.")
+                            return
+                        }
+                        @Suppress("DEPRECATION")
+                        audioManager.startBluetoothSco()
+                        @Suppress("DEPRECATION")
+                        audioManager.isBluetoothScoOn = true
+                    }
+                    else -> return
+                }
+            }
+            notifyAudioOutput(output)
+        } catch (error: Exception) {
+            notifyAudioOutput(output, error.message ?: "Android could not switch the audio output.")
+        }
+    }
+
+    private fun resetAudioOutput() {
+        val audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) audioManager.clearCommunicationDevice()
+        @Suppress("DEPRECATION")
+        audioManager.isBluetoothScoOn = false
+        @Suppress("DEPRECATION")
+        audioManager.stopBluetoothSco()
+        @Suppress("DEPRECATION")
+        audioManager.isSpeakerphoneOn = false
+        audioManager.mode = AudioManager.MODE_NORMAL
+    }
+
+    private fun notifyAudioOutput(output: String, error: String? = null) {
+        if (!::webView.isInitialized) return
+        val detail = JSONObject().put("output", output).put("error", error)
+        runOnUiThread { webView.evaluateJavascript("window.dispatchEvent(new CustomEvent('judo-audio-output',{detail:$detail}));", null) }
+    }
+
+    private inner class MeetingLifecycleBridge {
+        @JavascriptInterface
+        fun setMeetingActive(active: Boolean) {
+            // The bridge is available only to Judo's first-party page. Keep this
+            // origin check here as well as in the WebView navigation client.
+            runOnUiThread {
+                val host = runCatching { Uri.parse(webView.url ?: HOME_URL).host }.getOrNull()
+                if (!isJudoHost(host)) return@runOnUiThread
+                if (active) {
+                    if (keepAliveStarted.compareAndSet(false, true)) {
+                        if (!hasPermission(Manifest.permission.CAMERA) && !hasPermission(Manifest.permission.RECORD_AUDIO)) {
+                            keepAliveStarted.set(false)
+                            Toast.makeText(this@MainActivity, "Allow Judo camera or microphone access to keep a meeting active in the background.", Toast.LENGTH_LONG).show()
+                            return@runOnUiThread
+                        }
+                        try {
+                            ContextCompat.startForegroundService(
+                                this@MainActivity,
+                                Intent(this@MainActivity, MeetingKeepAliveService::class.java)
+                            )
+                        } catch (_: Exception) {
+                            keepAliveStarted.set(false)
+                            Toast.makeText(this@MainActivity, "Judo could not keep the meeting active in the background.", Toast.LENGTH_LONG).show()
+                        }
+                    }
+                } else if (keepAliveStarted.compareAndSet(true, false)) {
+                    stopService(Intent(this@MainActivity, MeetingKeepAliveService::class.java))
+                }
+            }
+        }
+
+        @JavascriptInterface
+        fun setAudioOutput(output: String) {
+            runOnUiThread {
+                val host = runCatching { Uri.parse(webView.url ?: HOME_URL).host }.getOrNull()
+                if (!isJudoHost(host)) return@runOnUiThread
+                if (output !in setOf("speaker", "earpiece", "bluetooth")) return@runOnUiThread
+                if (output == "bluetooth" && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !hasPermission(Manifest.permission.BLUETOOTH_CONNECT)) {
+                    pendingAudioOutput = output
+                    bluetoothPermissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+                    return@runOnUiThread
+                }
+                applyAudioOutput(output)
+            }
+        }
+
+        @JavascriptInterface
+        fun resetAudioOutput() {
+            runOnUiThread {
+                val host = runCatching { Uri.parse(webView.url ?: HOME_URL).host }.getOrNull()
+                if (isJudoHost(host)) this@MainActivity.resetAudioOutput()
+            }
+        }
+    }
 
     private inner class JudoWebViewClient : WebViewClient() {
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean = routeUri(request.url)
