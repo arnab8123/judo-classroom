@@ -143,7 +143,7 @@ class MainActivity : ComponentActivity() {
             val safeInsets = windowInsets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
-            val extraTopGap = (10 * resources.displayMetrics.density).roundToInt()
+            val extraTopGap = (95 * resources.displayMetrics.density).roundToInt()
             view.setPadding(safeInsets.left, safeInsets.top + extraTopGap, safeInsets.right, safeInsets.bottom)
             windowInsets
         }
