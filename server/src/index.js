@@ -15,6 +15,7 @@ import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { db } from './db.js';
 import { readBearer, requireSession, requireTeacher, signAppToken, verifyAppToken } from './auth.js';
 import { validFileSignature } from './file-validation.js';
+import { getVapidPublicKey, hasVapidKeys, sendWebPush } from './web-push.js';
 
 const PORT = Number(process.env.PORT || 3001);
 const defaultClientOrigin = process.env.NODE_ENV === 'production' ? '' : 'http://localhost:5173';
@@ -22,6 +23,7 @@ const configuredOrigins = (process.env.CLIENT_ORIGIN || defaultClientOrigin).spl
 const CLIENT_ORIGINS = [...new Set([...configuredOrigins, ...(process.env.RENDER_EXTERNAL_URL ? [process.env.RENDER_EXTERNAL_URL] : [])])];
 const SERVER_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const CLIENT_DIST = path.resolve(SERVER_ROOT, '../client/dist');
+const LATEST_ANDROID_APK = path.join(CLIENT_DIST, 'Judo-Android-WebView.apk');
 // LIVEKIT_URL is the default LiveKit WebSocket endpoint. LIVEKIT_PUBLIC_URL can explicitly
 // override the browser endpoint; otherwise local development derives the same hostname
 // the browser used to open Judo (important for LAN testing instead of returning localhost).
@@ -76,6 +78,7 @@ const io = new Server(server, {
 const roomService = new RoomServiceClient(LIVEKIT_HTTP_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET);
 const emptyRoomTimers = new Map();
 const roomStages = new Map();
+let pushDispatchRunning = false;
 // Any open attendance rows belong to sockets from a previous process; they are no longer connected.
 db.prepare('UPDATE attendance SET left_at=CURRENT_TIMESTAMP WHERE left_at IS NULL').run();
 function clearEmptyRoomTimer(code) {
@@ -99,6 +102,71 @@ function scheduleTemporaryRoomClosure(code) {
   timer.unref?.();
   emptyRoomTimers.set(code, timer);
 }
+
+function queuePushEvent(eventKey, title, body, url, classroomCode = null) {
+  db.prepare('INSERT OR IGNORE INTO push_events (event_key, title, body, url, classroom_code) VALUES (?, ?, ?, ?, ?)')
+    .run(eventKey, title, body, url, classroomCode);
+  void dispatchPushEvents();
+}
+
+async function dispatchPushEvents() {
+  if (!hasVapidKeys() || pushDispatchRunning) return;
+  pushDispatchRunning = true;
+  try {
+    const events = db.prepare("SELECT * FROM push_events WHERE created_at >= datetime('now', '-2 days') ORDER BY created_at").all();
+    for (const event of events) {
+      const subscriptions = event.classroom_code
+        ? db.prepare('SELECT s.endpoint, s.p256dh, s.auth FROM push_subscriptions s JOIN push_subscription_rooms r ON r.endpoint=s.endpoint WHERE r.classroom_code=?').all(event.classroom_code)
+        : db.prepare('SELECT endpoint, p256dh, auth FROM push_subscriptions').all();
+      for (const subscription of subscriptions) {
+        if (db.prepare('SELECT 1 FROM push_deliveries WHERE event_key=? AND endpoint=?').get(event.event_key, subscription.endpoint)) continue;
+        try {
+          const status = await sendWebPush({ endpoint: subscription.endpoint, keys: { p256dh: subscription.p256dh, auth: subscription.auth } }, {
+            title: event.title, body: event.body, url: event.url, tag: event.event_key
+          });
+          if (status >= 200 && status < 300) {
+            db.prepare('INSERT OR IGNORE INTO push_deliveries (event_key, endpoint) VALUES (?, ?)').run(event.event_key, subscription.endpoint);
+          } else if (status === 404 || status === 410) {
+            db.prepare('DELETE FROM push_subscriptions WHERE endpoint=?').run(subscription.endpoint);
+          }
+        } catch (error) {
+          console.warn('Web push delivery failed:', error?.message || error);
+        }
+      }
+    }
+  } finally {
+    pushDispatchRunning = false;
+  }
+}
+
+function checkScheduledClassNotifications() {
+  const soon = new Date(Date.now() + 5 * 60 * 1000).toISOString();
+  const now = new Date().toISOString();
+  const rooms = db.prepare(`SELECT code, title, scheduled_at FROM classrooms WHERE active=1 AND scheduled_at IS NOT NULL
+    AND scheduled_at > ? AND scheduled_at <= ?`).all(now, soon);
+  for (const room of rooms) {
+    queuePushEvent(`class-starting:${room.code}`, 'Class starts soon', `${room.title} is scheduled to start in about five minutes.`, `/?room=${encodeURIComponent(room.code)}`, room.code);
+  }
+}
+
+function checkForAppUpdateNotification() {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(CLIENT_DIST, 'android-update.json'), 'utf8'));
+    const version = Number(manifest.versionCode);
+    if (!Number.isSafeInteger(version) || version < 1) return;
+    queuePushEvent(`android-update:${version}`, 'Judo update available', `Judo ${manifest.versionName || ''} is ready to download.`.trim(), '/downloads/android/latest.apk');
+  } catch { /* No release manifest in local development or before the first client build. */ }
+}
+
+setInterval(checkScheduledClassNotifications, 30_000).unref?.();
+setInterval(dispatchPushEvents, 30_000).unref?.();
+setInterval(checkForAppUpdateNotification, 5 * 60_000).unref?.();
+setTimeout(() => {
+  checkScheduledClassNotifications();
+  checkForAppUpdateNotification();
+  void dispatchPushEvents();
+}, 5_000).unref?.();
+
 // Rebuild temporary-room idle timers after a deploy/restart. Permanent rooms stay open.
 for (const room of db.prepare('SELECT code FROM classrooms WHERE active=1 AND permanent=0').all()) {
   scheduleTemporaryRoomClosure(room.code);
@@ -446,6 +514,41 @@ app.get('/api/rooms/lookup/:code', (req, res) => {
   res.json({ room: safeRoom(row) });
 });
 
+app.get('/api/notifications/vapid-public-key', (_req, res) => {
+  if (!hasVapidKeys()) return res.status(503).json({ error: 'Web notifications are not configured on this server.' });
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json({ publicKey: getVapidPublicKey() });
+});
+
+app.post('/api/notifications/subscribe', requireActiveSession, (req, res) => {
+  const endpoint = String(req.body?.endpoint || '');
+  const p256dh = String(req.body?.keys?.p256dh || '');
+  const auth = String(req.body?.keys?.auth || '');
+  if (!endpoint || endpoint.length > 2048 || !p256dh || !auth || p256dh.length > 256 || auth.length > 128) {
+    return res.status(400).json({ error: 'A valid browser push subscription is required.' });
+  }
+  try {
+    const parsed = new URL(endpoint);
+    if (parsed.protocol !== 'https:') return res.status(400).json({ error: 'Push endpoints must use HTTPS.' });
+  } catch { return res.status(400).json({ error: 'Push endpoint is invalid.' }); }
+  const save = db.transaction(() => {
+    db.prepare(`INSERT INTO push_subscriptions (endpoint, p256dh, auth) VALUES (?, ?, ?)
+      ON CONFLICT(endpoint) DO UPDATE SET p256dh=excluded.p256dh, auth=excluded.auth, updated_at=CURRENT_TIMESTAMP`)
+      .run(endpoint, p256dh, auth);
+    db.prepare('INSERT OR IGNORE INTO push_subscription_rooms (endpoint, classroom_code) VALUES (?, ?)').run(endpoint, normalizeCode(req.session.roomCode));
+  });
+  save();
+  res.status(201).json({ ok: true });
+});
+
+app.delete('/api/notifications/subscribe', requireActiveSession, (req, res) => {
+  const endpoint = String(req.body?.endpoint || '');
+  if (!endpoint || endpoint.length > 2048) return res.status(400).json({ error: 'Push endpoint is required.' });
+  db.prepare('DELETE FROM push_subscription_rooms WHERE endpoint=? AND classroom_code=?').run(endpoint, normalizeCode(req.session.roomCode));
+  if (!db.prepare('SELECT 1 FROM push_subscription_rooms WHERE endpoint=?').get(endpoint)) db.prepare('DELETE FROM push_subscriptions WHERE endpoint=?').run(endpoint);
+  res.json({ ok: true });
+});
+
 app.post('/api/rooms/:code/join', async (req, res) => {
   try {
     const code = normalizeCode(req.params.code);
@@ -638,6 +741,13 @@ app.get('/api/files/:id/download', requireActiveSession, (req, res) => {
 });
 
 // In production, serve the Vite build from this same origin so the browser never calls localhost.
+app.get('/downloads/android/latest.apk', (_req, res) => {
+  if (!fs.existsSync(LATEST_ANDROID_APK)) return res.status(404).send('The latest Android app download is not available.');
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  res.download(LATEST_ANDROID_APK, 'Judo-Android.apk');
+});
 app.use('/api', (_req, res) => res.status(404).json({ error: 'API endpoint not found.' }));
 if (fs.existsSync(path.join(CLIENT_DIST, 'index.html'))) {
   app.use(express.static(CLIENT_DIST, { index: false, maxAge: process.env.NODE_ENV === 'production' ? '1h' : 0 }));
@@ -678,6 +788,10 @@ io.on('connection', (socket) => {
   const attendanceId = crypto.randomUUID();
   socket.data.attendanceId = attendanceId;
   socket.join(code);
+  if (session.role === 'teacher') {
+    const classroom = db.prepare('SELECT title FROM classrooms WHERE code=?').get(code);
+    if (classroom) queuePushEvent(`class-live:${code}`, 'Class is live', `${classroom.title} has started. Join now.`, `/?room=${encodeURIComponent(code)}`, code);
+  }
   clearEmptyRoomTimer(code);
   db.prepare('INSERT INTO attendance (id, classroom_code, participant_key, display_name, role) VALUES (?, ?, ?, ?, ?)')
     .run(attendanceId, code, session.sessionId, session.displayName, session.role);
@@ -819,7 +933,10 @@ io.on('connection', (socket) => {
   socket.on('meeting:announcement', (data) => {
     if (session.role !== 'teacher' || !allowSocketEvent(socket, 'meeting:announcement', 3, 60_000)) return;
     const message = String(data?.message || '').trim().slice(0, 500);
-    if (message) io.to(code).emit('meeting:announcement', { displayName: session.displayName, message, createdAt: new Date().toISOString() });
+    if (message) {
+      io.to(code).emit('meeting:announcement', { displayName: session.displayName, message, createdAt: new Date().toISOString() });
+      queuePushEvent(`class-announcement:${code}:${crypto.randomUUID()}`, `${session.displayName} posted a class update`, message, `/?room=${encodeURIComponent(code)}`, code);
+    }
   });
 
   socket.on('disconnect', () => {

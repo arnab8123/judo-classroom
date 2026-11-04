@@ -188,6 +188,8 @@ When the Blueprint asks for values, supply:
 
 Render generates `AUTH_SECRET` for you. Keep the generated value private. The app's startup command runs `npm run seed` before starting the server: if the persistent database has no teacher account, it creates the initial account from these variables; after an account exists, it skips provisioning. Keep the seed variables private in Render and do not write their values into source code. The password is not logged in production.
 
+For browser push alerts, generate a stable VAPID key pair with `node scripts/generate-vapid-keys.mjs`, then set `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, and `VAPID_SUBJECT` in Render. Keep the private key secret and unchanged across deploys. Each browser opts into alerts for a class using the bell button inside that classroom; subscriptions receive class start reminders, live starts, teacher announcements, and new Android release alerts. Web Push is browser based and is not supported by the Android WebView wrapper.
+
 If you attach a custom domain, add its full HTTPS origin to `CLIENT_ORIGIN` in the Render environment. For multiple origins, separate them with commas. The Render-provided service origin is automatically allowed by the application; production does not allow the local Vite origin unless you explicitly configure it.
 
 ### 5. Verify the deployment
@@ -224,6 +226,7 @@ You can deploy the built frontend separately and set `VITE_API_URL` in the front
 | `LIVEKIT_PUBLIC_PORT` | Optional local development port for the derived browser LiveKit URL; defaults to the configured `LIVEKIT_URL` port or `7880`. |
 | `LIVEKIT_HTTP_URL` | Server API URL (`http://` locally, `https://` publicly). |
 | `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | Private LiveKit server credentials. |
+| `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` / `VAPID_SUBJECT` | Stable Web Push signing credentials. Generate with `node scripts/generate-vapid-keys.mjs`; keep the private key in deployment secrets. |
 | `APP_BASE_URL` | Public frontend URL used after OAuth sign-in; defaults to the Render service URL in production. |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | Optional Google OAuth web client. Register `http://localhost:3001/api/auth/oauth/google/callback` locally and `https://your-domain/api/auth/oauth/google/callback` in production. |
 | `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET` | Optional Microsoft account (including Outlook) OAuth app. Register `/api/auth/oauth/microsoft/callback` as its web redirect URI. |

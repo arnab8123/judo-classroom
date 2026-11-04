@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { io, Socket } from 'socket.io-client';
 import { LocalVideoTrack, Participant, Room, RoomEvent, Track, TrackPublication } from 'livekit-client';
 import {
-  ArrowLeft, ArrowUpRight, Bell, Bluetooth, BookOpen, Check, ChevronDown, Circle, CircleHelp, Copy, FileText, Hand, Headphones,
+  ArrowLeft, ArrowUpRight, Bell, BellRing, Bluetooth, BookOpen, Check, ChevronDown, Circle, CircleHelp, Copy, FileText, Hand, Headphones,
   MessageCircle, Mic, MicOff, MonitorUp, MoreHorizontal, Maximize2, PanelRightClose, Paperclip, PhoneOff, Pin, Send,
   Settings2, ShieldCheck, Smile, Sparkles, Square, Sun, Moon, Users, Video, VideoOff, Volume2, VolumeX, X, Wifi, XCircle
 } from 'lucide-react';
@@ -45,6 +45,8 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   const [androidMicOn, setAndroidMicOn] = useState(false);
   const [reaction, setReaction] = useState<{ displayName: string; emoji: string; id: string } | null>(null);
   const [announcement, setAnnouncement] = useState('');
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushMessage, setPushMessage] = useState('');
   const [showAnnouncement, setShowAnnouncement] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [isRecording, setIsRecording] = useState(false);
@@ -422,6 +424,35 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   };
   const leave = () => { if (androidScreenSharing) stopAndroidScreenShare(); if (room) room.disconnect(); onLeave(); };
 
+  const enableClassNotifications = async () => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+      setPushMessage('Push notifications are not supported by this browser.');
+      return;
+    }
+    try {
+      const configResponse = await fetch(`${API_BASE}/api/notifications/vapid-public-key`);
+      const config = await configResponse.json();
+      if (!configResponse.ok || !config.publicKey) throw new Error(config.error || 'Notifications are not configured yet.');
+      const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+      if (permission !== 'granted') throw new Error('Allow notifications in your browser settings to receive class alerts.');
+      await navigator.serviceWorker.register('/sw.js');
+      const registration = await navigator.serviceWorker.ready;
+      const applicationServerKey = Uint8Array.from(atob(config.publicKey.replace(/-/g, '+').replace(/_/g, '/')), (char) => char.charCodeAt(0));
+      const subscription = await registration.pushManager.getSubscription() || await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
+      const response = await fetch(`${API_BASE}/api/notifications/subscribe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.sessionToken}` },
+        body: JSON.stringify(subscription)
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Could not enable class alerts.');
+      setPushEnabled(true);
+      setPushMessage('Class alerts are on for this browser.');
+    } catch (error) {
+      setPushMessage(error instanceof Error ? error.message : 'Could not enable class alerts.');
+    }
+  };
+
   const localCameraOn = room?.localParticipant.isCameraEnabled ?? mediaChoice.cameraEnabled;
   const localMicOn = androidScreenSharing ? androidMicOn : (room?.localParticipant.isMicrophoneEnabled ?? mediaChoice.micEnabled);
   const currentPanel = (next: typeof panel) => setPanel((old) => old === next ? null : next);
@@ -429,8 +460,9 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
 
   return <div className="meeting-shell">
     <header className="meeting-header"><div className="meeting-brand-wrap"><a className="brand meeting-brand" href="#" onClick={(e) => e.preventDefault()}><span className="brand-mark brand-mark-logo"><img src="/judo-logo.svg" alt="" /></span><span>Judo</span></a><span className="meeting-header-divider" /><div className="meeting-heading"><strong>{session.room.title}</strong><span>{session.room.language} lesson</span></div></div>
-      <div className="meeting-header-actions"><span className={`connection-pill connection-${connection}`}><span className="online-dot" />{connection === 'connected' ? 'Connected' : connection === 'reconnecting' ? 'Reconnecting…' : connection === 'disconnected' ? 'Disconnected' : 'Connecting…'}</span><span className="meeting-clock"><span className={`record-dot ${isRecording ? 'record-dot-active' : ''}`} /> {clockText}</span><button className="icon-button" title="Copy invite link" aria-label="Copy invite link" onClick={copyInvite}><Copy size={17} /></button><button className="theme-toggle" onClick={onToggleTheme} aria-label="Toggle color theme">{theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}</button><button className="icon-button" title="Help" aria-label="Help" onClick={() => alert('Tip: allow camera/microphone permissions, use the share menu to share screens, and use the right-side panels for chat, people, files, and private notes. Screen sharing and desktop audio depend on your browser and operating system.') }><CircleHelp size={18} /></button></div>
+      <div className="meeting-header-actions"><span className={`connection-pill connection-${connection}`}><span className="online-dot" />{connection === 'connected' ? 'Connected' : connection === 'reconnecting' ? 'Reconnecting…' : connection === 'disconnected' ? 'Disconnected' : 'Connecting…'}</span><span className="meeting-clock"><span className={`record-dot ${isRecording ? 'record-dot-active' : ''}`} /> {clockText}</span><button className="icon-button" title="Copy invite link" aria-label="Copy invite link" onClick={copyInvite}><Copy size={17} /></button><button className="icon-button" title={pushEnabled ? 'Class alerts are enabled' : 'Enable class alerts'} aria-label={pushEnabled ? 'Class alerts are enabled' : 'Enable class alerts'} onClick={() => void enableClassNotifications()} disabled={pushEnabled}>{pushEnabled ? <Bell size={17} /> : <BellRing size={17} />}</button><button className="theme-toggle" onClick={onToggleTheme} aria-label="Toggle color theme">{theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}</button><button className="icon-button" title="Help" aria-label="Help" onClick={() => alert('Tip: allow camera/microphone permissions, use the share menu to share screens, and use the right-side panels for chat, people, files, and private notes. Screen sharing and desktop audio depend on your browser and operating system.') }><CircleHelp size={18} /></button></div>
     </header>
+    {pushMessage && <div className="meeting-alert"><Bell size={15} /><span>{pushMessage}</span><button aria-label="Dismiss notification message" onClick={() => setPushMessage('')}><X size={15} /></button></div>}
     {announcement && <div className="announcement-overlay" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setAnnouncement(''); }}><section className="announcement-popup" role="alertdialog" aria-modal="true" aria-label="Meeting announcement"><div className="announcement-popup-header"><span><Bell size={17} /> Meeting announcement</span><button aria-label="Dismiss announcement" onClick={() => setAnnouncement('')}><X size={18} /></button></div><p>{announcement}</p></section></div>}
     {mediaError && <div className="meeting-alert" role="status"><XCircle size={17} /><span>{mediaError}</span><button onClick={() => setMediaError('')} aria-label="Dismiss error"><X size={15} /></button></div>}
     {endedMessage && <div className="meeting-ended-overlay"><div className="ended-card"><div className="ended-icon"><PhoneOff size={24} /></div><h2>Classroom ended</h2><p>{endedMessage}</p><button className="button button-primary" onClick={leave}>Return to Judo</button></div></div>}

@@ -115,6 +115,32 @@ CREATE TABLE IF NOT EXISTS room_blocks (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   PRIMARY KEY (classroom_code, participant_key)
 );
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  endpoint TEXT PRIMARY KEY,
+  p256dh TEXT NOT NULL,
+  auth TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS push_subscription_rooms (
+  endpoint TEXT NOT NULL REFERENCES push_subscriptions(endpoint) ON DELETE CASCADE,
+  classroom_code TEXT NOT NULL,
+  PRIMARY KEY (endpoint, classroom_code)
+);
+CREATE TABLE IF NOT EXISTS push_events (
+  event_key TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  body TEXT NOT NULL,
+  url TEXT NOT NULL,
+  classroom_code TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS push_deliveries (
+  event_key TEXT NOT NULL REFERENCES push_events(event_key) ON DELETE CASCADE,
+  endpoint TEXT NOT NULL REFERENCES push_subscriptions(endpoint) ON DELETE CASCADE,
+  delivered_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (event_key, endpoint)
+);
 `);
 
 // Backward-compatible schema upgrade for databases created by earlier versions.

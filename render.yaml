@@ -40,3 +40,9 @@ services:
         sync: false
       - key: RESEND_FROM_EMAIL
         value: Judo <verify@judomeet.online>
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        value: mailto:admin@judomeet.online
