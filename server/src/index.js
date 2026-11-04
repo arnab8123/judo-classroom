@@ -748,6 +748,12 @@ app.get('/downloads/android/latest.apk', (_req, res) => {
   res.setHeader('Expires', '0');
   res.download(LATEST_ANDROID_APK, 'Judo-Android.apk');
 });
+app.get('/.well-known/assetlinks.json', (_req, res, next) => {
+  const assetLinksFile = path.join(CLIENT_DIST, '.well-known', 'assetlinks.json');
+  if (!fs.existsSync(assetLinksFile)) return res.status(404).end();
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.type('application/json').sendFile(assetLinksFile, (error) => { if (error && !res.headersSent) next(error); });
+});
 app.use('/api', (_req, res) => res.status(404).json({ error: 'API endpoint not found.' }));
 if (fs.existsSync(path.join(CLIENT_DIST, 'index.html'))) {
   app.use(express.static(CLIENT_DIST, { index: false, maxAge: process.env.NODE_ENV === 'production' ? '1h' : 0 }));

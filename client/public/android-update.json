@@ -1,6 +1,6 @@
 {
-  "versionCode": 8,
-  "versionName": "1.0.7",
+  "versionCode": 9,
+  "versionName": "1.0.8",
   "apkUrl": "https://judomeet.online/downloads/android/latest.apk",
-  "releaseNotes": "Reliably moves the join form above the Android keyboard while typing."
+  "releaseNotes": "Opens shared class links directly in Judo on Android and fills in the meeting code."
 }

@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "online.arnabmalakar.judo",
+      "sha256_cert_fingerprints": [
+        "24:5B:3B:38:CF:3E:9C:9B:5B:B8:55:D0:25:5C:60:CC:74:C0:5F:F3:14:67:C1:80:1C:49:A2:72:CD:74:B0:DD"
+      ]
+    }
+  }
+]

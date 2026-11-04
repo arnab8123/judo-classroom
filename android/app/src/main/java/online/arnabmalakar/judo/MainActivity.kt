@@ -175,7 +175,7 @@ class MainActivity : ComponentActivity() {
         android.webkit.CookieManager.getInstance().setAcceptCookie(true)
         android.webkit.CookieManager.getInstance().setAcceptThirdPartyCookies(webView, true)
         handleShareDeepLink(intent)
-        if (savedInstanceState == null) webView.loadUrl(HOME_URL)
+        if (savedInstanceState == null) webView.loadUrl(webAppLinkUrl(intent) ?: HOME_URL)
         else webView.restoreState(savedInstanceState)
         requestNotificationPermissionAtStartup()
         checkForAppUpdate()
@@ -341,7 +341,14 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        handleShareDeepLink(intent)
+        val appLink = webAppLinkUrl(intent)
+        if (appLink != null) webView.loadUrl(appLink) else handleShareDeepLink(intent)
+    }
+
+    private fun webAppLinkUrl(intent: Intent?): String? {
+        val uri = intent?.data ?: return null
+        if (intent.action != Intent.ACTION_VIEW || uri.host != "judomeet.online" || uri.scheme !in setOf("https", "http")) return null
+        return uri.buildUpon().scheme("https").build().toString()
     }
 
     private fun handleShareDeepLink(intent: Intent?) {
