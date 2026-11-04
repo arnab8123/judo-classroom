@@ -48,6 +48,7 @@ import java.io.File
 import java.io.BufferedInputStream
 import java.io.FileOutputStream
 import java.security.SecureRandom
+import kotlin.math.roundToInt
 
 class MainActivity : ComponentActivity() {
     private lateinit var webView: WebView
@@ -142,7 +143,8 @@ class MainActivity : ComponentActivity() {
             val safeInsets = windowInsets.getInsets(
                 WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout()
             )
-            view.setPadding(safeInsets.left, safeInsets.top, safeInsets.right, safeInsets.bottom)
+            val extraTopGap = (10 * resources.displayMetrics.density).roundToInt()
+            view.setPadding(safeInsets.left, safeInsets.top + extraTopGap, safeInsets.right, safeInsets.bottom)
             windowInsets
         }
         ViewCompat.requestApplyInsets(webView)
@@ -151,7 +153,20 @@ class MainActivity : ComponentActivity() {
         handleShareDeepLink(intent)
         if (savedInstanceState == null) webView.loadUrl(HOME_URL)
         else webView.restoreState(savedInstanceState)
+        requestNotificationPermissionAtStartup()
         checkForAppUpdate()
+    }
+
+    private fun requestNotificationPermissionAtStartup() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (hasPermission(Manifest.permission.POST_NOTIFICATIONS)) return
+
+        val preferences = getSharedPreferences(NOTIFICATION_PREFERENCES, MODE_PRIVATE)
+        if (preferences.getBoolean(NOTIFICATION_PERMISSION_ASKED, false)) return
+
+        preferences.edit().putBoolean(NOTIFICATION_PERMISSION_ASKED, true).apply()
+        notificationPermissionRequestPending = true
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
     }
 
     private fun checkForAppUpdate() {
@@ -679,6 +694,8 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val HOME_URL = "https://judomeet.online/"
+        private const val NOTIFICATION_PREFERENCES = "judo_notifications"
+        private const val NOTIFICATION_PERMISSION_ASKED = "startup_permission_asked"
         private const val UPDATE_INFO_URL = "https://judomeet.online/android-update.json"
         private const val UPDATE_PREFERENCES = "android_app_updates"
         private const val MAX_UPDATE_SIZE = 200L * 1024L * 1024L
