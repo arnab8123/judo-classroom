@@ -51,6 +51,7 @@ android {
 dependencies {
     implementation("io.livekit:livekit-android:2.29.2")
     implementation("androidx.activity:activity-ktx:1.10.1")
+    implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("io.socket:socket.io-client:2.1.1") {

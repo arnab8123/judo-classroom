@@ -109,10 +109,35 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
         setAndroidMicOn(false);
         const restoreMic = typeof detail?.micEnabled === 'boolean' ? detail.micEnabled : pendingAndroidMicRestoreRef.current;
         pendingAndroidMicRestoreRef.current = null;
-        if (typeof restoreMic === 'boolean' && roomRef.current) {
-          roomRef.current.localParticipant.setMicrophoneEnabled(restoreMic).then(bump).catch((error) => {
-            setMediaError(error instanceof Error ? error.message : 'Could not restore your microphone setting.');
-          });
+        const meetingEnded = /meeting has ended|classroom has ended/i.test(detail?.message || '');
+        if (typeof restoreMic === 'boolean' && roomRef.current && !meetingEnded) {
+          const currentRoom = roomRef.current;
+          void (async () => {
+            try {
+              if (currentRoom.state === 'disconnected') {
+                await currentRoom.connect(session.livekitUrl, session.livekitToken, { autoSubscribe: true, maxRetries: 3 });
+              } else if (currentRoom.state !== 'connected') {
+                await new Promise<void>((resolve, reject) => {
+                  const timeoutId = window.setTimeout(() => finish(new Error('Meeting reconnection timed out.')), 20000);
+                  const onState = (state: string) => {
+                    if (state === 'connected') finish();
+                    else if (state === 'disconnected') finish(new Error('Meeting connection was lost.'));
+                  };
+                  const finish = (error?: Error) => {
+                    window.clearTimeout(timeoutId);
+                    currentRoom.off(RoomEvent.ConnectionStateChanged, onState);
+                    if (error) reject(error); else resolve();
+                  };
+                  currentRoom.on(RoomEvent.ConnectionStateChanged, onState);
+                  if (currentRoom.state === 'connected') finish();
+                });
+              }
+              await currentRoom.localParticipant.setMicrophoneEnabled(restoreMic);
+              bump();
+            } catch (error) {
+              setMediaError(error instanceof Error ? `Could not restore the meeting connection: ${error.message}` : 'Could not restore the meeting connection. Tap Reconnect and try again.');
+            }
+          })();
         }
       }
       if (detail?.error) setMediaError(detail.error);
@@ -122,7 +147,7 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
     };
     window.addEventListener('judo-native-screen-share', onNativeShare);
     return () => window.removeEventListener('judo-native-screen-share', onNativeShare);
-  }, [bump]);
+  }, [bump, session.livekitUrl, session.livekitToken]);
 
   useEffect(() => {
     let active = true;

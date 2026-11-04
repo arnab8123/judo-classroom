@@ -16,6 +16,8 @@ type PendingJoin = { code: string; displayName: string; room: Classroom };
 type MediaChoice = { cameraEnabled: boolean; micEnabled: boolean; cameraId: string; micId: string };
 type Theme = 'light' | 'dark';
 type MeetingIntent = { kind: 'instant' | 'schedule' | 'host'; title: string; language: string; permanent: boolean; scheduledAt?: string };
+type RecentClass = { code: string; title: string; language: string; displayName: string; leftAt: number };
+const RECENT_CLASS_KEY = 'judoRecentClass';
 
 export default function App() {
   const [page, setPage] = useState<Page>('home');
@@ -141,6 +143,10 @@ export default function App() {
   };
 
   const leaveClassroom = () => {
+    if (session) {
+      const recent: RecentClass = { code: session.room.code, title: session.room.title, language: session.room.language, displayName: session.displayName, leftAt: Date.now() };
+      localStorage.setItem(RECENT_CLASS_KEY, JSON.stringify(recent));
+    }
     sessionStorage.removeItem('classroomSessionToken');
     setSession(null);
     setPending(null);
@@ -198,9 +204,32 @@ function LandingPage({ onJoin, error, onTeacher, initialCode, theme, onToggleThe
   const [createBusy, setCreateBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
+  const [recentClass, setRecentClass] = useState<RecentClass | null>(() => {
+    try {
+      const value = JSON.parse(localStorage.getItem(RECENT_CLASS_KEY) || 'null') as RecentClass | null;
+      return value && typeof value.code === 'string' && typeof value.displayName === 'string' ? value : null;
+    } catch { return null; }
+  });
 
   useEffect(() => { if (initialCode) setCode(initialCode); }, [initialCode]);
   useEffect(() => { setCopied(false); setCopiedCode(false); }, [inviteRoom?.code]);
+  useEffect(() => {
+    if (!recentClass) return;
+    let active = true;
+    const verifyRecentClass = () => {
+      lookupRoom(recentClass.code).then(({ room }) => {
+        if (active) setRecentClass((current) => current?.code === room.code ? { ...current, title: room.title, language: room.language } : current);
+      }).catch((error) => {
+        if (!active || !/does not exist or has ended|classroom not found/i.test(error instanceof Error ? error.message : '')) return;
+        localStorage.removeItem(RECENT_CLASS_KEY);
+        setRecentClass(null);
+      });
+    };
+    verifyRecentClass();
+    const timer = window.setInterval(verifyRecentClass, 30000);
+    window.addEventListener('focus', verifyRecentClass);
+    return () => { active = false; window.clearInterval(timer); window.removeEventListener('focus', verifyRecentClass); };
+  }, [recentClass?.code]);
 
   const submitJoin = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -269,6 +298,7 @@ function LandingPage({ onJoin, error, onTeacher, initialCode, theme, onToggleThe
           <div className="meet-join-card">
             <div className="meet-join-card-header"><span className="meet-join-icon"><Link2 size={20} /></span><span className="meet-secure-tag"><ShieldCheck size={13} /> Ready when you are</span></div>
             <h2>Join a class</h2><p>Type your name and the meeting code.</p>
+            {recentClass && <div className="recent-class-card"><div className="recent-class-icon"><Video size={17} /></div><div className="recent-class-info"><span>Recently left · Still active</span><strong>{recentClass.title}</strong><small>{recentClass.language} · {recentClass.code}</small></div><button className="button button-outline button-small" disabled={busy} onClick={async () => { setBusy(true); await onJoin(recentClass.code, recentClass.displayName); setBusy(false); }}>{busy ? <span className="spinner" /> : 'Rejoin'}</button></div>}
             <form className="meet-join-form" onSubmit={submitJoin}>
               <label htmlFor="meet-display-name">What is your name?</label><input id="meet-display-name" autoComplete="name" maxLength={50} value={name} onChange={(e) => setName(e.target.value)} placeholder="Enter your name" required />
               <label htmlFor="meet-room-code">Meeting code or link</label><input id="meet-room-code" autoCapitalize="characters" value={code} onChange={(e) => { const value = e.target.value; const match = value.match(/[?&]room=([^&]+)/); try { setCode((match ? decodeURIComponent(match[1]) : value).trim().toUpperCase()); } catch { setCode(value.trim().toUpperCase()); } }} placeholder="Paste link or type code" required />

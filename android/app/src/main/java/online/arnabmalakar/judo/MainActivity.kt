@@ -2,9 +2,11 @@ package online.arnabmalakar.judo
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlertDialog
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.PackageInfo
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.projection.MediaProjectionManager
@@ -24,6 +26,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -41,6 +44,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
+import java.io.File
+import java.io.BufferedInputStream
+import java.io.FileOutputStream
 import java.security.SecureRandom
 
 class MainActivity : ComponentActivity() {
@@ -51,8 +57,20 @@ class MainActivity : ComponentActivity() {
     private var pendingWebPermission: PermissionRequest? = null
     private var pendingFileChooser: ValueCallback<Array<Uri>>? = null
     private var isPublishingScreen = false
+    private var isStoppingScreenShare = false
     private var nativeMicEnabled = false
     private val keepAliveStarted = AtomicBoolean(false)
+    private var meetingActiveRequested = false
+    private var notificationPermissionRequestPending = false
+    private var updateInProgress = false
+    private var pendingUpdateInstall: File? = null
+
+    private data class AppUpdate(val versionCode: Int, val versionName: String, val apkUrl: String, val releaseNotes: String)
+
+    private val notificationPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        notificationPermissionRequestPending = false
+        if (meetingActiveRequested) startMeetingKeepAlive()
+    }
     private var pendingAudioOutput: String? = null
 
     private val screenCaptureLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -133,6 +151,117 @@ class MainActivity : ComponentActivity() {
         handleShareDeepLink(intent)
         if (savedInstanceState == null) webView.loadUrl(HOME_URL)
         else webView.restoreState(savedInstanceState)
+        checkForAppUpdate()
+    }
+
+    private fun checkForAppUpdate() {
+        lifecycleScope.launch {
+            val update = withContext(Dispatchers.IO) {
+                runCatching {
+                    val connection = (URL(UPDATE_INFO_URL).openConnection() as HttpURLConnection).apply {
+                        connectTimeout = 8_000
+                        readTimeout = 8_000
+                        instanceFollowRedirects = false
+                    }
+                    try {
+                        if (connection.responseCode !in 200..299) return@runCatching null
+                        val body = connection.inputStream.bufferedReader().use { it.readText() }
+                        JSONObject(body).let {
+                            AppUpdate(it.getInt("versionCode"), it.getString("versionName"), it.getString("apkUrl"), it.optString("releaseNotes"))
+                        }
+                    } finally { connection.disconnect() }
+                }.getOrNull()
+            } ?: return@launch
+            val currentVersion = installedVersionCode()
+            if (update.versionCode <= currentVersion) return@launch
+            val preferences = getSharedPreferences(UPDATE_PREFERENCES, MODE_PRIVATE)
+            if (preferences.getInt("laterVersion", 0) == update.versionCode) return@launch
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("Judo update available")
+                .setMessage("Version ${update.versionName} is ready to install.${if (update.releaseNotes.isNotBlank()) "\n\n${update.releaseNotes}" else ""}")
+                .setPositiveButton("Download update", null)
+                .setNegativeButton("Later") { _, _ -> preferences.edit().putInt("laterVersion", update.versionCode).apply() }
+                .show().apply {
+                    getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                        if (updateInProgress) return@setOnClickListener
+                        updateInProgress = true
+                        getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
+                        Toast.makeText(this@MainActivity, "Downloading Judo update…", Toast.LENGTH_LONG).show()
+                        lifecycleScope.launch {
+                            val apk = withContext(Dispatchers.IO) { downloadAndVerifyUpdate(update) }
+                            updateInProgress = false
+                            dismiss()
+                            if (apk == null) {
+                                Toast.makeText(this@MainActivity, "Could not download a valid Judo update. Please try again later.", Toast.LENGTH_LONG).show()
+                            } else {
+                                installUpdate(apk)
+                            }
+                        }
+                    }
+                }
+        }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun installedVersionCode(): Long {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        return if (Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
+    }
+
+    private fun downloadAndVerifyUpdate(update: AppUpdate): File? = runCatching {
+        val apkUri = Uri.parse(update.apkUrl)
+        require(apkUri.scheme == "https" && apkUri.host == "judomeet.online") { "Untrusted update host" }
+        val connection = (URL(update.apkUrl).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 30_000
+            instanceFollowRedirects = false
+        }
+        val apk = File(cacheDir, "judo-update.apk")
+        try {
+            require(connection.responseCode in 200..299) { "Update download failed" }
+            require(connection.contentLengthLong in 1..MAX_UPDATE_SIZE) { "Invalid update file size" }
+            BufferedInputStream(connection.inputStream).use { input ->
+                FileOutputStream(apk).use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        total += count
+                        require(total <= MAX_UPDATE_SIZE) { "Update file is too large" }
+                        output.write(buffer, 0, count)
+                    }
+                }
+            }
+        } finally { connection.disconnect() }
+        @Suppress("DEPRECATION")
+        val archive: PackageInfo = packageManager.getPackageArchiveInfo(apk.absolutePath, 0) ?: error("Invalid APK")
+        val archiveVersion = if (Build.VERSION.SDK_INT >= 28) archive.longVersionCode else archive.versionCode.toLong()
+        require(archive.packageName == packageName && archiveVersion == update.versionCode) { "APK version does not match update information" }
+        apk
+    }.getOrNull()
+
+    private fun installUpdate(apk: File) {
+        if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+            pendingUpdateInstall = apk
+            startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:$packageName")))
+            Toast.makeText(this, "Allow installs for Judo, then return here to continue.", Toast.LENGTH_LONG).show()
+            return
+        }
+        val apkUri = FileProvider.getUriForFile(this, "$packageName.updates", apk)
+        startActivity(Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(apkUri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        })
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val pending = pendingUpdateInstall ?: return
+        if (Build.VERSION.SDK_INT < 26 || packageManager.canRequestPackageInstalls()) {
+            pendingUpdateInstall = null
+            installUpdate(pending)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -207,7 +336,7 @@ class MainActivity : ComponentActivity() {
                 }
                 nativeMicEnabled = micEnabled
                 val started = nativeRoom.localParticipant.setScreenShareEnabled(true, ScreenCaptureParams(permissionData, onStop = {
-                    runOnUiThread { finishNativeShare("Phone screen sharing stopped.") }
+                    runOnUiThread { finishNativeScreenShare("Phone screen sharing stopped.") }
                 }))
                 if (!started) throw IllegalStateException("Android could not start screen capture. Please try again.")
                 isPublishingScreen = true
@@ -273,23 +402,70 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopNativeShare() {
-        if (!isPublishingScreen) return
+        if (!isPublishingScreen || isStoppingScreenShare) return
+        isStoppingScreenShare = true
         lifecycleScope.launch {
-            try { shareRoom?.localParticipant?.setScreenShareEnabled(false) }
-            catch (error: Exception) { notifyWebShare(active = false, error = error.message ?: "Could not stop phone screen sharing.") }
-            finishNativeShare("Phone screen sharing stopped.")
+            try {
+                shareRoom?.localParticipant?.setScreenShareEnabled(false)
+            } catch (_: Exception) {
+                // The system may have already ended MediaProjection, which also
+                // unpublishes the screen track. Finish cleanup either way.
+            }
+            finishNativeScreenShare("Phone screen sharing stopped.", stopRequested = true)
+        }
+    }
+
+    private fun finishNativeScreenShare(message: String, stopRequested: Boolean = false) {
+        if (!isPublishingScreen || isStoppingScreenShare && !stopRequested) return
+        isStoppingScreenShare = true
+        lifecycleScope.launch {
+            if (nativeMicEnabled) {
+                try { shareRoom?.localParticipant?.setMicrophoneEnabled(false) }
+                catch (_: Exception) { }
+            }
+            isPublishingScreen = false
+            isStoppingScreenShare = false
+            nativeMicEnabled = false
+            // Keep the Android participant and meeting socket connected. Only
+            // the screen track and its optional microphone should stop here.
+            notifyWebShare(active = false, message = message)
         }
     }
 
     private fun finishNativeShare(message: String) {
-        val hadActiveShare = isPublishingScreen
         isPublishingScreen = false
+        isStoppingScreenShare = false
         shareRoom?.disconnect()
         shareRoom = null
         classroomSocket?.disconnect()
         classroomSocket = null
-        notifyWebShare(active = false, message = message, micEnabled = if (hadActiveShare) nativeMicEnabled else null)
+        notifyWebShare(active = false, message = message)
         nativeMicEnabled = false
+    }
+
+    private fun leaveNativeMeeting() {
+        isPublishingScreen = false
+        isStoppingScreenShare = false
+        shareRoom?.disconnect()
+        shareRoom = null
+        classroomSocket?.disconnect()
+        classroomSocket = null
+        nativeMicEnabled = false
+    }
+
+    private fun startMeetingKeepAlive() {
+        if (!meetingActiveRequested || !keepAliveStarted.compareAndSet(false, true)) return
+        if (!hasPermission(Manifest.permission.CAMERA) && !hasPermission(Manifest.permission.RECORD_AUDIO)) {
+            keepAliveStarted.set(false)
+            Toast.makeText(this, "Allow Judo camera or microphone access to keep a meeting active in the background.", Toast.LENGTH_LONG).show()
+            return
+        }
+        try {
+            ContextCompat.startForegroundService(this, Intent(this, MeetingKeepAliveService::class.java))
+        } catch (_: Exception) {
+            keepAliveStarted.set(false)
+            Toast.makeText(this, "Judo could not keep the meeting active in the background.", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun notifyWebShare(active: Boolean, error: String? = null, message: String? = null, micEnabled: Boolean? = null) {
@@ -381,24 +557,22 @@ class MainActivity : ComponentActivity() {
                 val host = runCatching { Uri.parse(webView.url ?: HOME_URL).host }.getOrNull()
                 if (!isJudoHost(host)) return@runOnUiThread
                 if (active) {
-                    if (keepAliveStarted.compareAndSet(false, true)) {
-                        if (!hasPermission(Manifest.permission.CAMERA) && !hasPermission(Manifest.permission.RECORD_AUDIO)) {
-                            keepAliveStarted.set(false)
-                            Toast.makeText(this@MainActivity, "Allow Judo camera or microphone access to keep a meeting active in the background.", Toast.LENGTH_LONG).show()
-                            return@runOnUiThread
+                    meetingActiveRequested = true
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !hasPermission(Manifest.permission.POST_NOTIFICATIONS)) {
+                        if (!notificationPermissionRequestPending) {
+                            notificationPermissionRequestPending = true
+                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
                         }
-                        try {
-                            ContextCompat.startForegroundService(
-                                this@MainActivity,
-                                Intent(this@MainActivity, MeetingKeepAliveService::class.java)
-                            )
-                        } catch (_: Exception) {
-                            keepAliveStarted.set(false)
-                            Toast.makeText(this@MainActivity, "Judo could not keep the meeting active in the background.", Toast.LENGTH_LONG).show()
-                        }
+                    } else {
+                        startMeetingKeepAlive()
                     }
-                } else if (keepAliveStarted.compareAndSet(true, false)) {
-                    stopService(Intent(this@MainActivity, MeetingKeepAliveService::class.java))
+                } else {
+                    meetingActiveRequested = false
+                    notificationPermissionRequestPending = false
+                    if (keepAliveStarted.compareAndSet(true, false)) {
+                        stopService(Intent(this@MainActivity, MeetingKeepAliveService::class.java))
+                    }
+                    leaveNativeMeeting()
                 }
             }
         }
@@ -494,10 +668,7 @@ class MainActivity : ComponentActivity() {
         pendingWebPermission = null
         pendingFileChooser?.onReceiveValue(null)
         pendingFileChooser = null
-        classroomSocket?.disconnect()
-        classroomSocket = null
-        shareRoom?.disconnect()
-        shareRoom = null
+        leaveNativeMeeting()
         if (::webView.isInitialized) {
             (webView.parent as? ViewGroup)?.removeView(webView)
             webView.stopLoading()
@@ -508,5 +679,8 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val HOME_URL = "https://judomeet.online/"
+        private const val UPDATE_INFO_URL = "https://judomeet.online/android-update.json"
+        private const val UPDATE_PREFERENCES = "android_app_updates"
+        private const val MAX_UPDATE_SIZE = 200L * 1024L * 1024L
     }
 }
