@@ -27,26 +27,29 @@ export default function App() {
   const [error, setError] = useState('');
   const [joining, setJoining] = useState(false);
   const [theme, setTheme] = useState<Theme>(() => {
+    const isAndroidApp = typeof navigator !== 'undefined' && navigator.userAgent.includes('JudoAndroidApp');
+    if (isAndroidApp) return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
     const saved = localStorage.getItem('judoTheme');
     if (saved === 'dark' || saved === 'light') return saved;
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    return 'dark';
   });
-  const [hasThemeChoice, setHasThemeChoice] = useState(() => ['dark', 'light'].includes(localStorage.getItem('judoTheme') || ''));
+  const isAndroidApp = typeof navigator !== 'undefined' && navigator.userAgent.includes('JudoAndroidApp');
+  const [hasThemeChoice, setHasThemeChoice] = useState(() => !isAndroidApp && ['dark', 'light'].includes(localStorage.getItem('judoTheme') || ''));
   const [hostIntent, setHostIntent] = useState<MeetingIntent | null>(null);
   const [inviteRoom, setInviteRoom] = useState<Classroom | null>(null);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    if (hasThemeChoice) localStorage.setItem('judoTheme', theme);
+    if (!isAndroidApp && hasThemeChoice) localStorage.setItem('judoTheme', theme);
   }, [theme, hasThemeChoice]);
 
   useEffect(() => {
     const media = window.matchMedia?.('(prefers-color-scheme: dark)');
     if (!media) return;
-    const syncSystemTheme = () => { if (!hasThemeChoice) setTheme(media.matches ? 'dark' : 'light'); };
+    const syncSystemTheme = () => { if (isAndroidApp || !hasThemeChoice) setTheme(media.matches ? 'dark' : 'light'); };
     media.addEventListener?.('change', syncSystemTheme);
     return () => media.removeEventListener?.('change', syncSystemTheme);
-  }, [hasThemeChoice]);
+  }, [hasThemeChoice, isAndroidApp]);
 
   useEffect(() => {
     const fragment = new URLSearchParams(window.location.hash.slice(1));
@@ -329,7 +332,7 @@ function LandingPage({ onJoin, error, onTeacher, initialCode, theme, onToggleThe
     {keyboardOpen && <div className="android-keyboard-scrim" aria-hidden="true" />}
     <header className="topbar meet-topbar">
       <a className="brand meet-brand" href="#top" aria-label="Judo home"><span className="brand-mark brand-mark-logo"><img src="/judo-logo.svg" alt="" /></span><span>Judo</span></a>
-      <div className="meet-top-right"><span className="meet-top-caption"><span className="online-dot" /> Simple video meetings</span><button className="theme-toggle" onClick={onToggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>{theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}<span>{theme === 'light' ? 'Dark mode' : 'Light mode'}</span></button><button className="button button-quiet meet-teacher-button" onClick={onTeacher}>{teacherUser ? 'Host dashboard' : 'Host sign in'} <ChevronRight size={16} /></button></div>
+      <div className="meet-top-right"><span className="meet-top-caption"><span className="online-dot" /> Simple video meetings</span>{!isAndroidApp && <button className="theme-toggle" onClick={onToggleTheme} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>{theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}<span>{theme === 'light' ? 'Dark mode' : 'Light mode'}</span></button>}<button className="button button-quiet meet-teacher-button" onClick={onTeacher}>{teacherUser ? 'Host dashboard' : 'Host sign in'} <ChevronRight size={16} /></button></div>
     </header>
 
     <main id="top" className="meet-main">

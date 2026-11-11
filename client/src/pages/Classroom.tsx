@@ -31,7 +31,7 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   const [socket, setSocket] = useState<Socket | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [panel, setPanel] = useState<'chat' | 'people' | 'files' | 'notes' | null>(null);
-  const [peopleVisible, setPeopleVisible] = useState(true);
+  const [peopleVisible, setPeopleVisible] = useState(() => !navigator.userAgent.includes('JudoAndroidApp'));
   const [stage, setStage] = useState<'video' | 'board'>('video');
   const [connection, setConnection] = useState<'connecting' | 'connected' | 'reconnecting' | 'disconnected'>('connecting');
   const [raised, setRaised] = useState(false);
@@ -286,7 +286,12 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
     }
   };
 
-  const participants: Participant[] = useMemo(() => room ? [room.localParticipant, ...room.remoteParticipants.values()] : [], [room, refreshKey]);
+  const participants: Participant[] = useMemo(() => {
+    if (!room) return [];
+    const unique = new Map<string, Participant>();
+    [room.localParticipant, ...room.remoteParticipants.values()].forEach((participant) => unique.set(participant.identity, participant));
+    return [...unique.values()];
+  }, [room, refreshKey]);
   const videoTiles = useMemo(() => {
     const seenScreenTracks = new Set<string>();
     return participants.map((participant) => {
@@ -473,7 +478,7 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
 
   return <div className="meeting-shell">
     <header className="meeting-header"><div className="meeting-brand-wrap"><a className="brand meeting-brand" href="#" onClick={(e) => e.preventDefault()}><span className="brand-mark brand-mark-logo"><img src="/judo-logo.svg" alt="" /></span><span>Judo</span></a><span className="meeting-header-divider" /><div className="meeting-heading"><strong>{session.room.title}</strong><span>{session.room.language} lesson</span></div></div>
-      <div className="meeting-header-actions"><span className={`connection-pill connection-${connection}`}><span className="online-dot" />{connection === 'connected' ? 'Connected' : connection === 'reconnecting' ? 'Reconnecting…' : connection === 'disconnected' ? 'Disconnected' : 'Connecting…'}</span><span className="meeting-clock"><span className={`record-dot ${isRecording ? 'record-dot-active' : ''}`} /> {clockText}</span><button className="icon-button" title="Copy invite link" aria-label="Copy invite link" onClick={copyInvite}><Copy size={17} /></button><button className="icon-button" title={pushEnabled ? 'Class alerts are enabled' : 'Enable class alerts'} aria-label={pushEnabled ? 'Class alerts are enabled' : 'Enable class alerts'} onClick={() => void enableClassNotifications()} disabled={pushEnabled}>{pushEnabled ? <Bell size={17} /> : <BellRing size={17} />}</button><button className="theme-toggle" onClick={onToggleTheme} aria-label="Toggle color theme">{theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}</button><button className="icon-button" title="Help" aria-label="Help" onClick={() => alert('Tip: allow camera/microphone permissions, use the share menu to share screens, and use the right-side panels for chat, people, files, and private notes. Screen sharing and desktop audio depend on your browser and operating system.') }><CircleHelp size={18} /></button></div>
+      <div className="meeting-header-actions"><span className={`connection-pill connection-${connection}`}><span className="online-dot" />{connection === 'connected' ? 'Connected' : connection === 'reconnecting' ? 'Reconnecting…' : connection === 'disconnected' ? 'Disconnected' : 'Connecting…'}</span><span className="meeting-clock"><span className={`record-dot ${isRecording ? 'record-dot-active' : ''}`} /> {clockText}</span><button className="icon-button" title="Copy invite link" aria-label="Copy invite link" onClick={copyInvite}><Copy size={17} /></button><button className="icon-button" title={pushEnabled ? 'Class alerts are enabled' : 'Enable class alerts'} aria-label={pushEnabled ? 'Class alerts are enabled' : 'Enable class alerts'} onClick={() => void enableClassNotifications()} disabled={pushEnabled}>{pushEnabled ? <Bell size={17} /> : <BellRing size={17} />}</button>{!navigator.userAgent.includes('JudoAndroidApp') && <button className="theme-toggle" onClick={onToggleTheme} aria-label="Toggle color theme">{theme === 'dark' ? <Sun size={17} /> : <Moon size={17} />}</button>}<button className="icon-button" title="Help" aria-label="Help" onClick={() => alert('Tip: allow camera/microphone permissions, use the share menu to share screens, and use the right-side panels for chat, people, files, and private notes. Screen sharing and desktop audio depend on your browser and operating system.') }><CircleHelp size={18} /></button></div>
     </header>
     {pushMessage && <div className="meeting-alert"><Bell size={15} /><span>{pushMessage}</span><button aria-label="Dismiss notification message" onClick={() => setPushMessage('')}><X size={15} /></button></div>}
     {announcement && <div className="announcement-overlay" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setAnnouncement(''); }}><section className="announcement-popup" role="alertdialog" aria-modal="true" aria-label="Meeting announcement"><div className="announcement-popup-header"><span><Bell size={17} /> Meeting announcement</span><button aria-label="Dismiss announcement" onClick={() => setAnnouncement('')}><X size={18} /></button></div><p>{announcement}</p></section></div>}

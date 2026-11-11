@@ -592,7 +592,7 @@ app.post('/api/rooms/:code/join', async (req, res) => {
 
 app.get('/api/rooms', requireTeacher, (req, res) => {
   const rows = db.prepare(`SELECT c.*, u.name AS teacher_name FROM classrooms c JOIN users u ON u.id=c.host_user_id WHERE c.host_user_id=? ORDER BY c.created_at DESC`).all(req.teacher.userId);
-  res.json({ rooms: rows.map((row) => ({ ...safeRoom(row), id: row.id, participantCount: db.prepare('SELECT COUNT(DISTINCT participant_key) AS count FROM attendance WHERE classroom_code=? AND left_at IS NULL').get(row.code).count })) });
+  res.json({ rooms: rows.map((row) => ({ ...safeRoom(row), id: row.id, participantCount: db.prepare('SELECT COUNT(DISTINCT participant_key) AS count FROM attendance WHERE classroom_code=? AND id IN (SELECT id FROM attendance a2 WHERE a2.participant_key=attendance.participant_key AND a2.classroom_code=attendance.classroom_code ORDER BY joined_at DESC LIMIT 1) AND left_at IS NULL').get(row.code).count })) });
 });
 
 app.post('/api/rooms', requireTeacher, (req, res) => {
@@ -631,7 +631,7 @@ app.get('/api/rooms/:code/attendance.csv', requireTeacher, (req, res) => {
   const code = normalizeCode(req.params.code);
   const room = db.prepare('SELECT * FROM classrooms WHERE code=? AND host_user_id=?').get(code, req.teacher.userId);
   if (!room) return res.status(404).json({ error: 'Classroom not found.' });
-  const rows = db.prepare('SELECT display_name, role, joined_at, left_at FROM attendance WHERE classroom_code=? ORDER BY joined_at ASC').all(code);
+  const rows = db.prepare('SELECT display_name, role, MIN(joined_at) AS joined_at, CASE WHEN SUM(left_at IS NULL)>0 THEN NULL ELSE MAX(left_at) END AS left_at FROM attendance WHERE classroom_code=? GROUP BY participant_key ORDER BY joined_at ASC').all(code);
   const escape = (value) => {
     const text = String(value ?? '');
     // Prefix formula-leading values so opening this CSV in spreadsheet software won't execute them.
@@ -648,7 +648,7 @@ app.get('/api/rooms/:code/attendance', requireTeacher, (req, res) => {
   const code = normalizeCode(req.params.code);
   const room = db.prepare('SELECT id FROM classrooms WHERE code=? AND host_user_id=?').get(code, req.teacher.userId);
   if (!room) return res.status(404).json({ error: 'Classroom not found.' });
-  const attendance = db.prepare('SELECT display_name AS displayName, role, joined_at AS joinedAt, left_at AS leftAt FROM attendance WHERE classroom_code=? ORDER BY joined_at DESC').all(code);
+  const attendance = db.prepare('SELECT display_name AS displayName, role, MIN(joined_at) AS joinedAt, CASE WHEN SUM(left_at IS NULL)>0 THEN NULL ELSE MAX(left_at) END AS leftAt FROM attendance WHERE classroom_code=? GROUP BY participant_key ORDER BY joinedAt DESC').all(code);
   res.json({ attendance });
 });
 
