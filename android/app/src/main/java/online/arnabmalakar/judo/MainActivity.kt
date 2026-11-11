@@ -788,6 +788,7 @@ class MainActivity : ComponentActivity() {
         private const val UPDATE_INFO_URL = "https://judomeet.online/android-update.json"
         private const val UPDATE_PREFERENCES = "android_app_updates"
         private const val NOTIFIED_VERSION = "notifiedVersion"
+        private const val DOWNLOADED_VERSION = "downloadedVersion"
         private const val UPDATE_NOTIFICATION_CHANNEL = "judo_app_updates"
         private const val UPDATE_NOTIFICATION_ID = 9105
         private const val MAX_UPDATE_SIZE = 200L * 1024L * 1024L
