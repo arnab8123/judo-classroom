@@ -249,31 +249,30 @@ class MainActivity : ComponentActivity() {
             val currentVersion = installedVersionCode()
             if (update.versionCode <= currentVersion) return@launch
             val preferences = getSharedPreferences(UPDATE_PREFERENCES, MODE_PRIVATE)
-            if (preferences.getInt("laterVersion", 0) == update.versionCode) return@launch
-            showUpdateNotification(update)
-            AlertDialog.Builder(this@MainActivity)
-                .setTitle("Judo update available")
-                .setMessage("Version ${update.versionName} is ready to install.${if (update.releaseNotes.isNotBlank()) "\n\n${update.releaseNotes}" else ""}")
-                .setPositiveButton("Download update", null)
-                .setNegativeButton("Later") { _, _ -> preferences.edit().putInt("laterVersion", update.versionCode).apply() }
-                .show().apply {
-                    getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                        if (updateInProgress) return@setOnClickListener
-                        updateInProgress = true
-                        getButton(AlertDialog.BUTTON_POSITIVE).isEnabled = false
-                        Toast.makeText(this@MainActivity, "Downloading Judo update…", Toast.LENGTH_LONG).show()
-                        lifecycleScope.launch {
-                            val apk = withContext(Dispatchers.IO) { downloadAndVerifyUpdate(update) }
-                            updateInProgress = false
-                            dismiss()
-                            if (apk == null) {
-                                Toast.makeText(this@MainActivity, "Could not download a valid Judo update. Please try again later.", Toast.LENGTH_LONG).show()
-                            } else {
-                                installUpdate(apk)
-                            }
-                        }
-                    }
+            if (preferences.getInt(DOWNLOADED_VERSION, 0) == update.versionCode) {
+                val cachedApk = File(cacheDir, "judo-update-${update.versionCode}.apk")
+                if (cachedApk.isFile) {
+                    installUpdate(cachedApk)
+                    return@launch
                 }
+            }
+            showUpdateNotification(update)
+            if (updateInProgress) return@launch
+            updateInProgress = true
+            Toast.makeText(this@MainActivity, "Downloading Judo ${update.versionName}…", Toast.LENGTH_LONG).show()
+            val apk = withContext(Dispatchers.IO) { downloadAndVerifyUpdate(update) }
+            updateInProgress = false
+            if (apk == null) {
+                Toast.makeText(this@MainActivity, "Could not download a valid Judo update. Please try again when connected to the internet.", Toast.LENGTH_LONG).show()
+                return@launch
+            }
+            preferences.edit().putInt(DOWNLOADED_VERSION, update.versionCode).apply()
+            AlertDialog.Builder(this@MainActivity)
+                .setTitle("Judo ${update.versionName} is ready")
+                .setMessage("The update has downloaded.${if (update.releaseNotes.isNotBlank()) "\n\n${update.releaseNotes}" else ""}\n\nAndroid will ask you to confirm the installation.")
+                .setPositiveButton("Install update") { _, _ -> installUpdate(apk) }
+                .setNegativeButton("Install later", null)
+                .show()
         }
     }
 
@@ -291,7 +290,7 @@ class MainActivity : ComponentActivity() {
             readTimeout = 30_000
             instanceFollowRedirects = false
         }
-        val apk = File(cacheDir, "judo-update.apk")
+        val apk = File(cacheDir, "judo-update-${update.versionCode}.apk")
         try {
             require(connection.responseCode in 200..299) { "Update download failed" }
             require(connection.contentLengthLong in 1..MAX_UPDATE_SIZE) { "Invalid update file size" }
