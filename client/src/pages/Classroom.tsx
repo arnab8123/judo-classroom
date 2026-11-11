@@ -16,7 +16,7 @@ import Whiteboard from '../components/Whiteboard';
 declare global {
   interface Window {
     dispatchEvent(event: Event): boolean;
-    JudoNative?: { setMeetingActive(active: boolean, title: string): void; setAudioOutput(output: string): void; resetAudioOutput(): void };
+    JudoNative?: { setMeetingActive(active: boolean, title: string): void; setAudioOutput(output: string): void; resetAudioOutput(): void; setScreenViewerFullscreen(active: boolean, landscape: boolean): void };
   }
 }
 
@@ -61,6 +61,7 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   const [audioOutput, setAudioOutput] = useState<'speaker' | 'earpiece' | 'bluetooth'>('speaker');
   const [audioMuted, setAudioMuted] = useState(false);
   const [pinnedScreenId, setPinnedScreenId] = useState('');
+  const [fullscreenScreen, setFullscreenScreen] = useState<{ id: string; landscape: boolean } | null>(null);
   const shareRef = useRef(screenShares);
   const stoppingSharesRef = useRef(new Set<string>());
   const recorderRef = useRef<MediaRecorder | null>(null);
@@ -84,6 +85,11 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
       window.JudoNative?.resetAudioOutput();
     };
   }, []);
+
+  useEffect(() => {
+    window.JudoNative?.setScreenViewerFullscreen(Boolean(fullscreenScreen), fullscreenScreen?.landscape ?? false);
+    return () => window.JudoNative?.setScreenViewerFullscreen(false, false);
+  }, [fullscreenScreen]);
 
   useEffect(() => {
     const onAudioOutput = (event: Event) => {
@@ -505,6 +511,8 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
             screen={tile.screen}
             raised={tile.raised}
             pinned={tile.screen && tile.key === pinnedScreenId}
+            fullscreen={Boolean(tile.screen && fullscreenScreen?.id === tile.key)}
+            onFullscreenChange={tile.screen ? (active, landscape) => setFullscreenScreen(active ? { id: tile.key, landscape } : null) : undefined}
             onPin={tile.screen ? () => setPinnedScreenId((old) => old === tile.key ? '' : tile.key) : undefined}
             onStop={tile.screen && tile.isLocal ? () => { const share = screenShares.find((item) => item.id === tile.publication.trackName?.split('|')[0]); if (share) stopScreenShare(share.id); } : undefined}
           />)}
@@ -540,8 +548,8 @@ export default function ClassroomView({ session, mediaChoice, onLeave, theme, on
   </div>;
 }
 
-function VideoTile({ participant, publication, displayName, isLocal, cameraOn, screen = false, raised, onStop, pinned = false, onPin }: {
-  participant: Participant; publication?: TrackPublication; displayName: string; isLocal: boolean; cameraOn: boolean; screen?: boolean; raised?: boolean; onStop?: () => void; pinned?: boolean; onPin?: () => void;
+function VideoTile({ participant, publication, displayName, isLocal, cameraOn, screen = false, raised, onStop, pinned = false, onPin, fullscreen = false, onFullscreenChange }: {
+  participant: Participant; publication?: TrackPublication; displayName: string; isLocal: boolean; cameraOn: boolean; screen?: boolean; raised?: boolean; onStop?: () => void; pinned?: boolean; onPin?: () => void; fullscreen?: boolean; onFullscreenChange?: (active: boolean, landscape: boolean) => void;
 }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const tileRef = useRef<HTMLElement>(null);
@@ -562,8 +570,17 @@ function VideoTile({ participant, publication, displayName, isLocal, cameraOn, s
   const activeSpeaker = participant.isSpeaking;
   const micOn = participant.isMicrophoneEnabled;
   const actualName = displayName;
-  const toggleFullscreen = async () => { if (!tileRef.current) return; try { if (document.fullscreenElement === tileRef.current) await document.exitFullscreen(); else await tileRef.current.requestFullscreen(); } catch { /* Fullscreen can be blocked by browser policy. */ } };
-  return <article ref={tileRef} className={`video-tile ${isScreen ? 'screen-tile' : ''} ${activeSpeaker && !isScreen ? 'tile-speaking' : ''}`}>
+  const toggleFullscreen = async () => {
+    if (!tileRef.current) return;
+    if (isScreen && navigator.userAgent.includes('JudoAndroidApp') && onFullscreenChange) {
+      const video = videoRef.current;
+      const landscape = (video?.videoWidth || 0) > (video?.videoHeight || 0);
+      onFullscreenChange(!fullscreen, landscape);
+      return;
+    }
+    try { if (document.fullscreenElement === tileRef.current) await document.exitFullscreen(); else await tileRef.current.requestFullscreen(); } catch { /* Fullscreen can be blocked by browser policy. */ }
+  };
+  return <article ref={tileRef} className={`video-tile ${isScreen ? 'screen-tile' : ''} ${fullscreen && isScreen ? 'screen-viewer-fullscreen' : ''} ${activeSpeaker && !isScreen ? 'tile-speaking' : ''}`}>
     {publication?.kind === Track.Kind.Video && cameraOn && <video ref={videoRef} autoPlay playsInline muted={isLocal} className="tile-video" />}
     <audio ref={audioRef} autoPlay muted={isLocal} />
     {!isScreen && !cameraOn && <div className="tile-avatar-state"><div className="tile-avatar">{(participant.name || participant.identity || '?').slice(0, 1).toUpperCase()}</div><span>{isLocal ? 'Your camera is off' : 'Camera off'}</span></div>}
@@ -571,7 +588,7 @@ function VideoTile({ participant, publication, displayName, isLocal, cameraOn, s
     <div className="tile-overlay"><div className="tile-name"><span className="tile-live-dot" />{actualName}{isLocal ? ' (You)' : ''}</div><div className="tile-status-icons">{raised && <span className="raised-hand-badge"><Hand size={14} /></span>}{!isScreen && <span className={`mic-status ${micOn ? '' : 'mic-status-off'} ${activeSpeaker ? 'mic-speaking' : ''}`}>{micOn ? <Mic size={13} /> : <MicOff size={13} />}</span>}{isScreen && <span className="mic-status"><MonitorUp size={13} /></span>}</div></div>
     {isScreen && onPin && <button className={`tile-pin ${pinned ? 'tile-pin-active' : ''}`} onClick={onPin} aria-label={pinned ? `Unpin ${actualName} from top` : `Pin ${actualName} to top`} title={pinned ? 'Unpin screen' : 'Pin screen to top'}><Pin size={14} />{pinned && <span>Pinned</span>}</button>}
     {isLocal && isScreen && onStop && <button className="tile-stop-share" onClick={onStop}><Square size={12} fill="currentColor" /> Stop sharing</button>}
-    <button className="tile-fullscreen" onClick={toggleFullscreen} aria-label={`View ${actualName} ${isScreen ? 'screen' : 'video'} fullscreen`} title="Full screen"><Maximize2 size={15} /></button>
+    <button className="tile-fullscreen" onClick={toggleFullscreen} aria-label={`${fullscreen ? 'Exit' : 'View'} ${actualName} ${isScreen ? 'screen' : 'video'} fullscreen`} title={fullscreen ? 'Exit full screen' : 'Full screen'}><Maximize2 size={15} /></button>
     {isLocal && !isScreen && <span className="local-preview-pill">You</span>}
   </article>;
 }

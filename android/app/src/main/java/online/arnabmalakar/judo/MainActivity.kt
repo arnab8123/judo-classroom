@@ -10,6 +10,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.PackageInfo
+import android.content.pm.ActivityInfo
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.media.projection.MediaProjectionManager
@@ -631,6 +632,27 @@ class MainActivity : ComponentActivity() {
     }
 
     private inner class MeetingLifecycleBridge {
+        @JavascriptInterface
+        fun setScreenViewerFullscreen(active: Boolean, landscape: Boolean) {
+            runOnUiThread {
+                val host = runCatching { Uri.parse(webView.url ?: HOME_URL).host }.getOrNull()
+                if (!isJudoHost(host)) return@runOnUiThread
+                if (active) {
+                    requestedOrientation = if (landscape) ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+                    else ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+                    window.decorView.systemUiVisibility = (android.view.View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        or android.view.View.SYSTEM_UI_FLAG_FULLSCREEN
+                        or android.view.View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        or android.view.View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        or android.view.View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        or android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE)
+                } else {
+                    requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+                    window.decorView.systemUiVisibility = android.view.View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                }
+            }
+        }
+
         @JavascriptInterface
         fun setMeetingActive(active: Boolean, title: String?) {
             // The bridge is available only to Judo's first-party page. Keep this

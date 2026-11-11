@@ -1,6 +1,6 @@
 {
-  "versionCode": 9,
-  "versionName": "1.0.8",
+  "versionCode": 10,
+  "versionName": "1.0.9",
   "apkUrl": "https://judomeet.online/downloads/android/latest.apk",
-  "releaseNotes": "Opens shared class links directly in Judo on Android and fills in the meeting code."
+  "releaseNotes": "Adds mobile meeting controls to More, including screen sharing, chat, raise hand, and pinning shared screens."
 }
